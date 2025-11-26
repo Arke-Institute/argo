@@ -2,18 +2,24 @@
 
 Building on v1, this document specifies new features for variable-depth traversal and combined semantic+type filtering.
 
+**Implementation Status:**
+- Phase 1 (Combined Type + Semantic): IMPLEMENTED
+- Phase 2 (Variable-Depth BFS): IMPLEMENTED
+- Phase 3 (Guided Search): IMPLEMENTED
+- Phase 4 (Stacked Variable-Depth): PENDING
+
 ---
 
 ## Summary of Changes from v1
 
-| Feature | v1 | v2 |
-|---------|----|----|
-| Fixed-hop traversal | Yes | Yes |
-| Type filters | Yes | Yes |
-| Semantic filters | At end only | **Anywhere (combined with type)** |
-| Variable-depth traversal | No | **Yes** |
-| Guided search | No | **Yes** |
-| Stacked variable-depth | No | **Yes** |
+| Feature | v1 | v2 | Status |
+|---------|----|----|--------|
+| Fixed-hop traversal | Yes | Yes | Done |
+| Type filters | Yes | Yes | Done |
+| Semantic filters | At end only | **Anywhere (combined with type)** | Done |
+| Variable-depth traversal | No | **Yes** | Done |
+| Guided search | No | **Yes** | Done |
+| Stacked variable-depth | No | **Yes** | Pending |
 
 ---
 

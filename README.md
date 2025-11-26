@@ -117,6 +117,16 @@ Content-Type: application/json
 | `-[term1, term2]->` | Match ANY of the terms |
 | `-[*]->` | Wildcard (any relation) |
 
+### Variable-Depth Traversal
+
+| Syntax | Description |
+|--------|-------------|
+| `-[*]{1,4}->` | 1 to 4 hops |
+| `-[*]{,4}->` | Up to 4 hops (shorthand for {1,4}) |
+| `-[*]{2,}->` | 2+ hops (capped by default max) |
+| `-[*]{3}->` | Exactly 3 hops |
+| `-[term]{1,3}->` | Variable depth with fuzzy relation |
+
 ### Node Filters
 
 | Syntax | Description | Example |
@@ -143,6 +153,15 @@ Content-Type: application/json
 
 # Open-ended exploration with semantic filter
 "Thomas Jefferson" -[*]-> "significant historical"
+
+# Variable-depth: find files within 4 hops
+@george_washington -[*]{1,4}-> type:file
+
+# Variable-depth: find people through organizations
+@declaration -[*]{,3}-> type:person
+
+# Variable-depth with semantic filter
+@george_washington -[*]{1,3}-> type:event ~ "military battle"
 ```
 
 ## Architecture

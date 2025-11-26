@@ -108,10 +108,10 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
-    // ]-> (outgoing end)
-    if (ch === ']' && peek(1) === '-' && peek(2) === '>') {
-      advance(3);
-      tokens.push({ type: 'ARROW_OUT_END', value: ']->', position: startPos });
+    // -> (outgoing arrow end)
+    if (ch === '-' && peek(1) === '>') {
+      advance(2);
+      tokens.push({ type: 'ARROW_OUT', value: '->', position: startPos });
       continue;
     }
 
@@ -122,10 +122,18 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
-    // ]- (incoming end) - note: no > at the end for incoming
-    if (ch === ']' && peek(1) === '-' && peek(2) !== '>') {
-      advance(2);
-      tokens.push({ type: 'ARROW_IN_END', value: ']-', position: startPos });
+    // ] (close bracket)
+    if (ch === ']') {
+      advance();
+      tokens.push({ type: 'RBRACKET', value: ']', position: startPos });
+      continue;
+    }
+
+    // - (dash for incoming end, standalone)
+    // Must come after -[ and -> checks
+    if (ch === '-') {
+      advance();
+      tokens.push({ type: 'DASH', value: '-', position: startPos });
       continue;
     }
 
@@ -140,6 +148,31 @@ export function tokenize(input: string): Token[] {
     if (ch === ',') {
       advance();
       tokens.push({ type: 'COMMA', value: ',', position: startPos });
+      continue;
+    }
+
+    // Left brace (depth range start)
+    if (ch === '{') {
+      advance();
+      tokens.push({ type: 'LBRACE', value: '{', position: startPos });
+      continue;
+    }
+
+    // Right brace (depth range end)
+    if (ch === '}') {
+      advance();
+      tokens.push({ type: 'RBRACE', value: '}', position: startPos });
+      continue;
+    }
+
+    // Number (for depth range)
+    if (/[0-9]/.test(ch)) {
+      let num = '';
+      while (pos < input.length && /[0-9]/.test(input[pos])) {
+        num += input[pos];
+        advance();
+      }
+      tokens.push({ type: 'NUMBER', value: num, position: startPos });
       continue;
     }
 

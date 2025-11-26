@@ -10,6 +10,7 @@ import type {
   Hop,
   RelationMatch,
   Filter,
+  DepthRange,
 } from './types';
 
 export class ParseError extends Error {
@@ -114,15 +115,78 @@ export class Parser {
     // Parse relation
     const relation = this.parseRelation();
 
-    // Expect arrow end
-    const expectedEnd =
-      direction === 'outgoing' ? 'ARROW_OUT_END' : 'ARROW_IN_END';
-    this.expect(expectedEnd);
+    // Expect closing bracket
+    this.expect('RBRACKET');
+
+    // Parse optional depth range (between ] and -> or -)
+    const depth_range = this.parseDepthRange();
+
+    // Expect arrow end: -> for outgoing, - for incoming
+    if (direction === 'outgoing') {
+      this.expect('ARROW_OUT');
+    } else {
+      this.expect('DASH');
+    }
 
     // Parse optional filter
     const filter = this.parseFilter();
 
-    return { direction, relation, filter };
+    return { direction, relation, filter, depth_range };
+  }
+
+  private parseDepthRange(): DepthRange | undefined {
+    if (this.current().type !== 'LBRACE') {
+      return undefined;
+    }
+
+    this.advance(); // consume {
+
+    let min = 1;
+    let max: number;
+
+    const firstToken = this.current();
+
+    if (firstToken.type === 'NUMBER') {
+      const first = parseInt(this.advance().value, 10);
+
+      if (this.current().type === 'RBRACE') {
+        // {3} - exact depth
+        this.advance();
+        return { min: first, max: first };
+      }
+
+      if (this.current().type === 'COMMA') {
+        this.advance(); // consume comma
+        min = first;
+
+        if (this.current().type === 'NUMBER') {
+          max = parseInt(this.advance().value, 10);
+        } else {
+          // {2,} - min with no max (use default)
+          max = -1;
+        }
+
+        this.expect('RBRACE');
+        return { min, max };
+      }
+
+      throw new ParseError(
+        'Expected , or } after number in depth range',
+        this.current().position
+      );
+    } else if (firstToken.type === 'COMMA') {
+      // {,4} - shorthand for {1,4}
+      this.advance(); // consume comma
+      min = 1;
+      max = parseInt(this.expect('NUMBER').value, 10);
+      this.expect('RBRACE');
+      return { min, max };
+    }
+
+    throw new ParseError(
+      'Expected number or comma in depth range',
+      firstToken.position
+    );
   }
 
   private parseRelation(): RelationMatch {

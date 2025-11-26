@@ -150,6 +150,75 @@ const testCases: TestCase[] = [
   },
 
   // ============================================================================
+  // Variable-depth traversal
+  // ============================================================================
+  {
+    name: 'Variable depth - single depth {1}',
+    description: 'Variable depth with exact 1 hop (same as regular)',
+    path: `@${PREFIX}george_washington -[*]{1}-> type:date`,
+    expected: {
+      minResults: 1,
+      containsEntity: `${PREFIX}date_1732_02_22`,
+      containsType: 'date',
+    },
+  },
+
+  {
+    name: 'Variable depth - exact 2 hops {2}',
+    description: 'Find dates 2 hops from declaration (via person)',
+    path: `@${PREFIX}declaration -[*]{2}-> type:date`,
+    expected: {
+      minResults: 1,
+      // declaration → person → date (2 hops)
+      containsType: 'date',
+    },
+  },
+
+  {
+    name: 'Variable depth - range {1,2}',
+    description: 'Find people within 1-2 hops of declaration',
+    path: `@${PREFIX}declaration -[*]{1,2}-> type:person`,
+    expected: {
+      minResults: 1,
+      // Depth 1: jefferson, washington directly
+      containsEntity: `${PREFIX}thomas_jefferson`,
+      containsType: 'person',
+    },
+  },
+
+  {
+    name: 'Variable depth - shorthand {,3}',
+    description: 'Find organizations within 3 hops using shorthand',
+    path: `@${PREFIX}declaration -[*]{,3}-> type:organization`,
+    expected: {
+      minResults: 1,
+      // declaration → person → organization (2 hops)
+      containsEntity: `${PREFIX}continental_congress`,
+      containsType: 'organization',
+    },
+  },
+
+  {
+    name: 'Variable depth - with fuzzy relation',
+    description: 'Variable depth with fuzzy relation matching',
+    path: `@${PREFIX}george_washington -[affiliated, member]{1,2}-> type:organization`,
+    expected: {
+      minResults: 1,
+      containsEntity: `${PREFIX}continental_congress`,
+    },
+  },
+
+  {
+    name: 'Variable depth - with type + semantic filter',
+    description: 'Variable depth with combined type and semantic filter',
+    path: `@${PREFIX}george_washington -[*]{1,3}-> type:date ~ "birth"`,
+    expected: {
+      minResults: 1,
+      containsType: 'date',
+    },
+  },
+
+  // ============================================================================
   // Parse error
   // ============================================================================
   {

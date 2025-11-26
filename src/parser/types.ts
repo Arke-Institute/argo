@@ -11,12 +11,16 @@ export type TokenType =
   | 'AT_ID' // @george_washington
   | 'TYPE_FILTER' // type:person
   | 'ARROW_OUT_START' // -[
-  | 'ARROW_OUT_END' // ]->
+  | 'ARROW_OUT' // -> (outgoing arrow end)
   | 'ARROW_IN_START' // <-[
-  | 'ARROW_IN_END' // ]-
+  | 'RBRACKET' // ] (closes relation bracket)
+  | 'DASH' // - (incoming arrow end, after ])
   | 'COMMA' // ,
   | 'WILDCARD' // *
   | 'TILDE' // ~ (semantic modifier)
+  | 'LBRACE' // { (depth range start)
+  | 'RBRACE' // } (depth range end)
+  | 'NUMBER' // 1, 2, 3, etc. (for depth range)
   | 'TERM' // born, affiliated, etc.
   | 'EOF';
 
@@ -43,6 +47,12 @@ export interface Hop {
   direction: 'outgoing' | 'incoming';
   relation: RelationMatch;
   filter: Filter | null;
+  depth_range?: DepthRange;
+}
+
+export interface DepthRange {
+  min: number; // minimum depth (default 1)
+  max: number; // maximum depth (-1 means unbounded, use default max)
 }
 
 export type RelationMatch =

@@ -13,6 +13,7 @@ import type {
 import type { PathAST } from '../parser/types';
 import { resolveEntry } from './entry';
 import { executeHop } from './traverse';
+import { executeVariableDepthHop } from './variable-depth';
 
 const DEFAULT_K = 5;
 const DEFAULT_K_EXPLORE_MULTIPLIER = 3;
@@ -54,8 +55,27 @@ export async function execute(
     const hop = ast.hops[i];
     const previousCandidates = candidates;
 
-    candidates = await executeHop(candidates, hop, services, k, k_explore);
-    candidatesExplored += candidates.length;
+    // Check if this is a variable-depth hop
+    if (hop.depth_range) {
+      // Variable-depth hop - returns final results directly
+      // Note: Variable-depth hops should typically be the last hop
+      candidates = await executeVariableDepthHop(
+        candidates,
+        hop,
+        services,
+        k,
+        k_explore
+      );
+      candidatesExplored += candidates.length;
+
+      // Variable-depth returns final results, so we're done
+      // (even if there are more hops after, we treat this as terminal)
+      break;
+    } else {
+      // Regular single hop
+      candidates = await executeHop(candidates, hop, services, k, k_explore);
+      candidatesExplored += candidates.length;
+    }
 
     if (candidates.length === 0) {
       // Return partial path info

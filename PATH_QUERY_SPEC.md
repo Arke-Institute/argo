@@ -45,6 +45,25 @@ Edges connect entities and specify direction and relation matching.
 
 **Example**: `-[born, birth]->` will match relations like `BORN_ON`, `BIRTH_DATE`, `DATE_OF_BIRTH`, etc.
 
+### 2a. Variable-Depth Traversal
+
+For exploring multiple hops without specifying exact depth:
+
+| Syntax | Description |
+|--------|-------------|
+| `-[*]{1,4}->` | 1 to 4 hops |
+| `-[*]{,4}->` | Up to 4 hops (shorthand for {1,4}) |
+| `-[*]{2,}->` | 2 or more hops (capped by default max_depth=4) |
+| `-[*]{3}->` | Exactly 3 hops |
+| `-[term]{1,3}->` | Variable depth with fuzzy relation matching |
+
+**Execution**: BFS (breadth-first search) where each depth builds on previous:
+- Results collected at each depth that match the final filter
+- For type-only filters: closer results always win (early termination when k results found)
+- For semantic filters: continues to max depth (deeper match might beat closer)
+
+**Scoring**: Path scores multiply naturally (similarity < 1.0 = natural decay). No artificial depth penalty.
+
 ### 3. Node Filters
 
 After an edge, you can filter what entities to include.
@@ -81,19 +100,24 @@ The **rightmost position** is always the result target.
 query           := entry_point (edge filter?)*
 entry_point     := semantic_search | exact_entity
 edge            := outgoing | incoming
-outgoing        := "-[" relation "]->"
-incoming        := "<-[" relation "]-"
+outgoing        := "-[" relation "]" depth_range? "->"
+incoming        := "<-[" relation "]" depth_range? "-"
 relation        := "*" | term_list
 term_list       := term ("," term)*
 term            := [a-zA-Z_]+
+depth_range     := "{" range_spec "}"
+range_spec      := min_max | exact
+min_max         := integer? "," integer?
+exact           := integer
 filter          := combined_filter | type_filter | exact_entity | semantic_search | ε
 combined_filter := type_filter "~" semantic_search
 type_filter     := "type:" typename
-typename        := "person" | "place" | "organization" | "date" | "file" | "event" | "unknown"
+typename        := "person" | "place" | "organization" | "date" | "file" | "event" | "pi" | "unknown"
 exact_entity    := "@" canonical_id
 semantic_search := '"' text '"'
-canonical_id    := [a-zA-Z0-9_:]+
+canonical_id    := [a-zA-Z0-9_:-]+
 text            := [^"]+
+integer         := [0-9]+
 ```
 
 ---
