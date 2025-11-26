@@ -113,6 +113,52 @@ Fetch vectors by ID for similarity calculation.
 }
 ```
 
+### POST /query-by-ids
+Rank a set of candidate vectors by similarity to a query. Useful for filtering results to a specific set of IDs.
+
+**Request (text query)**:
+```json
+{
+  "ids": ["uuid_123", "uuid_456", "uuid_789"],
+  "text": "Dr Gillingham",
+  "top_k": 10,
+  "include_metadata": true
+}
+```
+
+**Request (vector query)**:
+```json
+{
+  "ids": ["uuid_123", "uuid_456", "uuid_789"],
+  "vector": [0.123, -0.456, ...],
+  "top_k": 10,
+  "include_metadata": true
+}
+```
+
+**Response**:
+```json
+{
+  "matches": [
+    {
+      "id": "uuid_456",
+      "score": 0.95,
+      "metadata": {
+        "canonical_id": "uuid_456",
+        "label": "Dr Gillingham",
+        "type": "person",
+        "source_pi": "01KA1H53CP..."
+      }
+    }
+  ]
+}
+```
+
+**Notes**:
+- Fetches candidate vectors and computes cosine similarity client-side
+- Automatically batches fetches for large ID lists (>1000)
+- Results sorted by similarity score (descending)
+
 ## Configuration
 - **Memory**: 128 MB
 - **Timeout**: 30 seconds

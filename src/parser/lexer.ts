@@ -143,6 +143,13 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
+    // Tilde (semantic modifier)
+    if (ch === '~') {
+      advance();
+      tokens.push({ type: 'TILDE', value: '~', position: startPos });
+      continue;
+    }
+
     // Term (relation name or other identifier)
     if (/[a-zA-Z_]/.test(ch)) {
       const term = readTerm();

@@ -1,0 +1,1 @@
+- when adding new examples to the tests make sure to add test data in the setup and also in the test itself

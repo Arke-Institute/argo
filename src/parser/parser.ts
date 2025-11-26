@@ -162,10 +162,30 @@ export class Parser {
   private parseFilter(): Filter | null {
     const token = this.current();
 
-    // Type filter
+    // Type filter (possibly combined with semantic)
     if (token.type === 'TYPE_FILTER') {
       this.advance();
-      return { type: 'type_filter', value: token.value };
+      const typeValue = token.value;
+
+      // Check for ~ followed by quoted string (combined filter)
+      if (this.current().type === 'TILDE') {
+        this.advance(); // consume ~
+        const semanticToken = this.current();
+        if (semanticToken.type !== 'QUOTED_STRING') {
+          throw new ParseError(
+            'Expected quoted string after ~',
+            semanticToken.position
+          );
+        }
+        this.advance();
+        return {
+          type: 'combined_filter',
+          type_value: typeValue,
+          semantic_text: semanticToken.value,
+        };
+      }
+
+      return { type: 'type_filter', value: typeValue };
     }
 
     // Exact ID

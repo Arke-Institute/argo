@@ -161,6 +161,18 @@ const relationships: Relationship[] = [
     predicate: 'OCCURRED_ON',
     object_id: `${PREFIX}date_1781_10_19`,
   },
+  // Washington commanded at Yorktown
+  {
+    subject_id: `${PREFIX}george_washington`,
+    predicate: 'COMMANDED_AT',
+    object_id: `${PREFIX}battle_yorktown`,
+  },
+  // Jefferson was at Continental Congress during the war
+  {
+    subject_id: `${PREFIX}thomas_jefferson`,
+    predicate: 'PARTICIPATED_IN',
+    object_id: `${PREFIX}battle_yorktown`,
+  },
 ];
 
 async function createTestPI(): Promise<void> {

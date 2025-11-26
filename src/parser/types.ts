@@ -16,6 +16,7 @@ export type TokenType =
   | 'ARROW_IN_END' // ]-
   | 'COMMA' // ,
   | 'WILDCARD' // *
+  | 'TILDE' // ~ (semantic modifier)
   | 'TERM' // born, affiliated, etc.
   | 'EOF';
 
@@ -51,4 +52,5 @@ export type RelationMatch =
 export type Filter =
   | { type: 'type_filter'; value: string }
   | { type: 'exact_id'; id: string }
-  | { type: 'semantic_search'; text: string };
+  | { type: 'semantic_search'; text: string }
+  | { type: 'combined_filter'; type_value: string; semantic_text: string };

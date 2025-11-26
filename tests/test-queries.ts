@@ -151,6 +151,21 @@ const testCases: TestCase[] = [
   },
 
   // ============================================================================
+  // Combined type + semantic filter
+  // ============================================================================
+  {
+    name: 'Combined type + semantic filter',
+    description: 'Find events semantically similar to "military battle war"',
+    path: `@${PREFIX}george_washington -[*]-> type:event ~ "military battle war"`,
+    threshold: 0.3,
+    expected: {
+      minResults: 1,
+      containsEntity: `${PREFIX}battle_yorktown`,
+      containsType: 'event',
+    },
+  },
+
+  // ============================================================================
   // Parse error
   // ============================================================================
   {

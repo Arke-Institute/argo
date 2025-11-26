@@ -80,15 +80,14 @@ async function executeHopForCandidate(
     threshold
   );
 
-  // Take top k
-  const topRelations = scoredRelations.slice(0, k);
-
-  if (topRelations.length === 0) {
+  // Don't limit relations here - k only applies to final results
+  // We need to explore all matching relations to find the right targets
+  if (scoredRelations.length === 0) {
     return [];
   }
 
   // Get target entities
-  const targetIds = topRelations.map((r) => r.target_id);
+  const targetIds = scoredRelations.map((r) => r.target_id);
   const uniqueTargetIds = [...new Set(targetIds)].filter(
     (id) => !candidate.visited.has(id)
   );
@@ -111,7 +110,7 @@ async function executeHopForCandidate(
   // Build new candidate paths
   const newCandidates: CandidatePath[] = [];
 
-  for (const scored of topRelations) {
+  for (const scored of scoredRelations) {
     const entity = filteredEntities.find(
       (e) => e.entity.canonical_id === scored.target_id
     );
@@ -233,18 +232,48 @@ async function applyFilter(
   }
 
   if (filter.type === 'semantic_search') {
-    // Embed the filter text
-    const filterEmbedding = await services.embedding.embedOne(filter.text);
-
-    // Query Pinecone filtered to only these entity IDs
+    // Query Pinecone filtered to only these entity IDs, using text directly
     const ids = entities.map((e) => e.canonical_id);
-    const matches = await services.pinecone.queryByIds(filterEmbedding, ids, k);
+    const matches = await services.pinecone.queryByIdsWithText(
+      filter.text,
+      ids,
+      k
+    );
 
     // Build result with scores
     const result: Array<{ entity: Entity; filterScore: number }> = [];
     for (const match of matches) {
       if (match.score < threshold) continue;
       const entity = entities.find((e) => e.canonical_id === match.id);
+      if (entity) {
+        result.push({ entity, filterScore: match.score });
+      }
+    }
+
+    return result;
+  }
+
+  if (filter.type === 'combined_filter') {
+    // Step 1: Apply type filter
+    const typeFiltered = entities.filter((e) => e.type === filter.type_value);
+
+    if (typeFiltered.length === 0) {
+      return [];
+    }
+
+    // Step 2: Semantic ranking within type-filtered candidates
+    const ids = typeFiltered.map((e) => e.canonical_id);
+    const matches = await services.pinecone.queryByIdsWithText(
+      filter.semantic_text,
+      ids,
+      k
+    );
+
+    // Build result with scores
+    const result: Array<{ entity: Entity; filterScore: number }> = [];
+    for (const match of matches) {
+      if (match.score < threshold) continue;
+      const entity = typeFiltered.find((e) => e.canonical_id === match.id);
       if (entity) {
         result.push({ entity, filterScore: match.score });
       }

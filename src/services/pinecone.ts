@@ -46,19 +46,37 @@ export class PineconeClient {
   }
 
   /**
-   * Search filtered to specific entity IDs
+   * Rank candidate vectors by similarity to a text query.
+   * Uses the /query-by-ids endpoint which fetches vectors and computes
+   * cosine similarity server-side.
    */
-  async queryByIds(
-    vector: number[],
+  async queryByIdsWithText(
+    text: string,
     ids: string[],
     top_k?: number
   ): Promise<PineconeMatch[]> {
-    return this.query(vector, {
-      top_k: top_k || ids.length,
-      filter: {
-        canonical_id: { $in: ids },
-      },
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const response = await this.service.fetch('http://pinecone/query-by-ids', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids,
+        text,
+        top_k: top_k || ids.length,
+        include_metadata: true,
+      }),
     });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Pinecone query-by-ids failed: ${response.status} ${error}`);
+    }
+
+    const result = (await response.json()) as PineconeQueryResponse;
+    return result.matches || [];
   }
 
   /**
