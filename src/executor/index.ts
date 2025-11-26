@@ -14,9 +14,8 @@ import type { PathAST } from '../parser/types';
 import { resolveEntry } from './entry';
 import { executeHop } from './traverse';
 
-const DEFAULT_K = 3;
-const DEFAULT_THRESHOLD = 0.5;
-const DEFAULT_MAX_RESULTS = 20;
+const DEFAULT_K = 5;
+const DEFAULT_K_EXPLORE_MULTIPLIER = 3;
 
 /**
  * Execute a parsed path query
@@ -29,13 +28,12 @@ export async function execute(
   const startTime = Date.now();
 
   const k = params.k ?? DEFAULT_K;
-  const threshold = params.threshold ?? DEFAULT_THRESHOLD;
-  const max_results = params.max_results ?? DEFAULT_MAX_RESULTS;
+  const k_explore = params.k_explore ?? k * DEFAULT_K_EXPLORE_MULTIPLIER;
 
   let candidatesExplored = 0;
 
   // Resolve entry point
-  let candidates = await resolveEntry(ast.entry, services, k, threshold);
+  let candidates = await resolveEntry(ast.entry, services, k_explore);
   candidatesExplored += candidates.length;
 
   if (candidates.length === 0) {
@@ -43,7 +41,7 @@ export async function execute(
       params.path || '',
       ast.hops.length,
       k,
-      threshold,
+      k_explore,
       startTime,
       candidatesExplored,
       'no_entry_point',
@@ -56,7 +54,7 @@ export async function execute(
     const hop = ast.hops[i];
     const previousCandidates = candidates;
 
-    candidates = await executeHop(candidates, hop, services, k, threshold);
+    candidates = await executeHop(candidates, hop, services, k, k_explore);
     candidatesExplored += candidates.length;
 
     if (candidates.length === 0) {
@@ -65,7 +63,7 @@ export async function execute(
         params.path || '',
         ast.hops.length,
         k,
-        threshold,
+        k_explore,
         startTime,
         candidatesExplored,
         previousCandidates,
@@ -74,8 +72,8 @@ export async function execute(
     }
   }
 
-  // Build final results
-  const results = buildResults(candidates, max_results);
+  // Build final results - take top k
+  const results = buildResults(candidates, k);
 
   return {
     results,
@@ -83,7 +81,7 @@ export async function execute(
       query: params.path || '',
       hops: ast.hops.length,
       k,
-      threshold,
+      k_explore,
       total_candidates_explored: candidatesExplored,
       execution_time_ms: Date.now() - startTime,
     },
@@ -115,7 +113,7 @@ function buildErrorResult(
   query: string,
   hops: number,
   k: number,
-  threshold: number,
+  k_explore: number,
   startTime: number,
   candidatesExplored: number,
   error: string,
@@ -127,7 +125,7 @@ function buildErrorResult(
       query,
       hops,
       k,
-      threshold,
+      k_explore,
       total_candidates_explored: candidatesExplored,
       execution_time_ms: Date.now() - startTime,
       error,
@@ -143,7 +141,7 @@ function buildPartialResult(
   query: string,
   totalHops: number,
   k: number,
-  threshold: number,
+  k_explore: number,
   startTime: number,
   candidatesExplored: number,
   lastCandidates: CandidatePath[],
@@ -158,7 +156,7 @@ function buildPartialResult(
       query,
       hops: totalHops,
       k,
-      threshold,
+      k_explore,
       total_candidates_explored: candidatesExplored,
       execution_time_ms: Date.now() - startTime,
       error: 'no_path_found',

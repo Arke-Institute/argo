@@ -3,7 +3,7 @@
  */
 
 import type { Services } from '../services';
-import type { Entity, CandidatePath } from '../types';
+import type { CandidatePath } from '../types';
 import type { EntryPoint } from '../parser/types';
 
 /**
@@ -13,14 +13,13 @@ import type { EntryPoint } from '../parser/types';
 export async function resolveEntry(
   entry: EntryPoint,
   services: Services,
-  k: number,
-  threshold: number
+  k_explore: number
 ): Promise<CandidatePath[]> {
   if (entry.type === 'exact_id') {
     return resolveExactId(entry.id, services);
   }
 
-  return resolveSemanticSearch(entry.text, services, k, threshold);
+  return resolveSemanticSearch(entry.text, services, k_explore);
 }
 
 /**
@@ -58,21 +57,18 @@ async function resolveExactId(
 async function resolveSemanticSearch(
   text: string,
   services: Services,
-  k: number,
-  threshold: number
+  k_explore: number
 ): Promise<CandidatePath[]> {
   // Embed the search text
   const embedding = await services.embedding.embedOne(text);
 
-  // Query Pinecone
-  const matches = await services.pinecone.query(embedding, { top_k: k });
+  // Query Pinecone for top k_explore matches
+  const matches = await services.pinecone.query(embedding, { top_k: k_explore });
 
-  // Filter by threshold and fetch full entities
+  // Fetch full entities for all matches
   const candidates: CandidatePath[] = [];
 
   for (const match of matches) {
-    if (match.score < threshold) continue;
-
     const entity = await services.graphdb.getEntity(match.id);
     if (!entity) continue;
 

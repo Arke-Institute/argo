@@ -28,7 +28,7 @@ interface TestCase {
   description: string;
   path: string;
   k?: number;
-  threshold?: number;
+  k_explore?: number;
   expected: {
     minResults?: number;
     maxResults?: number;
@@ -61,7 +61,6 @@ const testCases: TestCase[] = [
     name: 'Semantic search → outgoing → type filter',
     description: 'Search for "Washington" and find his residence',
     path: `"George Washington president" -[resided, lived, home]-> type:place`,
-    threshold: 0.3,
     expected: {
       minResults: 1,
       containsEntity: `${PREFIX}mount_vernon`,
@@ -117,7 +116,6 @@ const testCases: TestCase[] = [
     name: 'Semantic filter at end',
     description: 'Find documents related to Jefferson that mention independence',
     path: `@${PREFIX}thomas_jefferson <-[authored, wrote]- "independence declaration"`,
-    threshold: 0.3,
     expected: {
       minResults: 1,
       containsEntity: `${PREFIX}declaration`,
@@ -138,26 +136,12 @@ const testCases: TestCase[] = [
   },
 
   // ============================================================================
-  // No results (high threshold)
-  // ============================================================================
-  {
-    name: 'No matching relations (high threshold)',
-    description: 'Should fail to find teleportation relations',
-    path: `@${PREFIX}george_washington -[teleported, beamed]-> type:place`,
-    threshold: 0.9,
-    expected: {
-      maxResults: 0,
-    },
-  },
-
-  // ============================================================================
   // Combined type + semantic filter
   // ============================================================================
   {
     name: 'Combined type + semantic filter',
     description: 'Find events semantically similar to "military battle war"',
     path: `@${PREFIX}george_washington -[*]-> type:event ~ "military battle war"`,
-    threshold: 0.3,
     expected: {
       minResults: 1,
       containsEntity: `${PREFIX}battle_yorktown`,
@@ -192,14 +176,16 @@ interface QueryResult {
 
 async function runTest(test: TestCase): Promise<{ passed: boolean; message: string; details?: unknown }> {
   try {
+    const body: Record<string, unknown> = {
+      path: test.path,
+    };
+    if (test.k !== undefined) body.k = test.k;
+    if (test.k_explore !== undefined) body.k_explore = test.k_explore;
+
     const response = await fetch(`${BASE_URL}/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        path: test.path,
-        k: test.k ?? 3,
-        threshold: test.threshold ?? 0.5,
-      }),
+      body: JSON.stringify(body),
     });
 
     const data: QueryResult = await response.json();

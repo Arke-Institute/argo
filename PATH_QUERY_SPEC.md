@@ -52,11 +52,14 @@ After an edge, you can filter what entities to include.
 | Syntax | Description | Example |
 |--------|-------------|---------|
 | `type:typename` | Filter by entity type | `type:person` |
+| `type:typename ~ "text"` | Type filter + semantic ranking | `type:event ~ "military battle"` |
 | `@canonical_id` | Exact entity match | `@mount_vernon` |
 | `"text"` | Semantic filter on candidates | `"historical event"` |
 | (none) | No filter, accept all | `-[knows]->` at end of query |
 
 **Type filter** restricts results to entities of that type. Valid types: `person`, `place`, `organization`, `date`, `file`, `event`, `unknown`.
+
+**Combined type + semantic filter** first filters by type, then ranks within that type by semantic similarity. The `~` operator means "similar to". Example: `type:event ~ "military battle"` finds events that are semantically similar to "military battle".
 
 **Semantic filter** (quoted text at a non-entry position) ranks the candidate entities by semantic similarity to the text. This is different from entry-point search: it searches *within* the candidates found by traversal, not the whole index.
 
@@ -75,21 +78,22 @@ The **rightmost position** is always the result target.
 ## Complete Grammar
 
 ```
-query        := entry_point (edge filter?)*
-entry_point  := semantic_search | exact_entity
-edge         := outgoing | incoming
-outgoing     := "-[" relation "]->"
-incoming     := "<-[" relation "]-"
-relation     := "*" | term_list
-term_list    := term ("," term)*
-term         := [a-zA-Z_]+
-filter       := type_filter | exact_entity | semantic_search | ε
-type_filter  := "type:" typename
-typename     := "person" | "place" | "organization" | "date" | "file" | "event" | "unknown"
-exact_entity := "@" canonical_id
+query           := entry_point (edge filter?)*
+entry_point     := semantic_search | exact_entity
+edge            := outgoing | incoming
+outgoing        := "-[" relation "]->"
+incoming        := "<-[" relation "]-"
+relation        := "*" | term_list
+term_list       := term ("," term)*
+term            := [a-zA-Z_]+
+filter          := combined_filter | type_filter | exact_entity | semantic_search | ε
+combined_filter := type_filter "~" semantic_search
+type_filter     := "type:" typename
+typename        := "person" | "place" | "organization" | "date" | "file" | "event" | "unknown"
+exact_entity    := "@" canonical_id
 semantic_search := '"' text '"'
-canonical_id := [a-zA-Z0-9_:]+
-text         := [^"]+
+canonical_id    := [a-zA-Z0-9_:]+
+text            := [^"]+
 ```
 
 ---
@@ -100,9 +104,8 @@ text         := [^"]+
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `k` | int | 3 | Top-k results to keep at each hop |
-| `threshold` | float | 0.5 | Minimum similarity score for relation/entity matching |
-| `max_results` | int | 20 | Maximum final results to return |
+| `k` | int | 5 | Number of final results to return |
+| `k_explore` | int | `k * 3` | Beam width for intermediate traversal (how many candidates to explore at each hop) |
 
 ### Execution Steps
 
@@ -116,11 +119,11 @@ Given a query like:
 ```
 entry_point = "George Washington" (semantic search)
 
-→ Call Pinecone: embed("George Washington"), query top_k=k
+→ Call Pinecone: embed("George Washington"), query top_k=k_explore
 → Results: [george_washington (0.95), washington_irving (0.72), ...]
-→ Keep top k, apply threshold
-→ current_entities = [george_washington]
-   paths = [[george_washington]]
+→ Keep top k_explore results
+→ current_entities = [george_washington, ...]
+   paths = [[george_washington], ...]
 ```
 
 **Step 2: First Edge Traversal**
@@ -133,7 +136,7 @@ For each entity in current_entities:
   → Get all outgoing relations from Neo4j
   → Embed relation predicates (cached)
   → Score against embed("born")
-  → Keep top k relations above threshold
+  → Keep top k_explore relations by score
 
   For each matched relation:
     → Add target entity to candidates
@@ -153,7 +156,7 @@ filter = type:event
 For each entity in current_entities:
   → Get all INCOMING relations from Neo4j
   → Score against embed("event")
-  → Keep top k relations above threshold
+  → Keep top k_explore relations by score
 
   For each matched relation:
     → Add SOURCE entity to candidates (incoming edge)
@@ -213,7 +216,7 @@ For each entity in current_entities:
   → Get candidate IDs: [event_123, meeting_456, letter_789, ...]
   → Query Pinecone with embed("historical event"), filter to only these IDs
   → Rank by similarity
-  → Keep top k above threshold
+  → Keep top k_explore by score
 
 → current_entities = [event_123, ...]
 ```
@@ -340,7 +343,7 @@ This allows finding entities that are:
 
 ### No Results at Entry Point
 
-If semantic search returns no results above threshold:
+If semantic search returns no results:
 
 ```
 "xyzzy nonsense query" -[*]-> type:person
@@ -442,7 +445,7 @@ Given fuzzy terms `[born, birth]` and candidate relations `[BORN_ON, DIED_ON, AF
    - Score = max similarity across all fuzzy terms
    - `score(BORN_ON) = max(sim("born", BORN_ON), sim("birth", BORN_ON))`
 3. Rank relations by score
-4. Keep top k above threshold
+4. Keep top k_explore by score
 
 ### Exact Relation Matching
 
@@ -492,7 +495,7 @@ interface Metadata {
   query: string;
   hops: number;
   k: number;
-  threshold: number;
+  k_explore: number;
   total_candidates_explored: number;
   execution_time_ms: number;
   error?: string;

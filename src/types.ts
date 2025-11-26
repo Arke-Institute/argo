@@ -45,8 +45,7 @@ export interface RelationshipSet {
 export interface QueryParams {
   path: string;
   k?: number;
-  threshold?: number;
-  max_results?: number;
+  k_explore?: number;
 }
 
 export interface QueryResult {
@@ -73,7 +72,7 @@ export interface QueryMetadata {
   query: string;
   hops: number;
   k: number;
-  threshold: number;
+  k_explore: number;
   total_candidates_explored: number;
   execution_time_ms: number;
   error?: string;
@@ -114,7 +113,6 @@ export interface CandidatePath {
 
 export interface ExecutionContext {
   k: number;
-  threshold: number;
-  max_results: number;
+  k_explore: number;
   candidates_explored: number;
 }

@@ -26,7 +26,7 @@ export async function executeHop(
   hop: Hop,
   services: Services,
   k: number,
-  threshold: number
+  k_explore: number
 ): Promise<CandidatePath[]> {
   const newCandidates: CandidatePath[] = [];
 
@@ -35,15 +35,14 @@ export async function executeHop(
       candidate,
       hop,
       services,
-      k,
-      threshold
+      k_explore
     );
     newCandidates.push(...hopResults);
   }
 
-  // Sort by score and limit to reasonable number
+  // Sort by score and limit beam width
   newCandidates.sort((a, b) => b.score - a.score);
-  return newCandidates.slice(0, k * candidates.length);
+  return newCandidates.slice(0, k_explore * candidates.length);
 }
 
 /**
@@ -53,8 +52,7 @@ async function executeHopForCandidate(
   candidate: CandidatePath,
   hop: Hop,
   services: Services,
-  k: number,
-  threshold: number
+  k_explore: number
 ): Promise<CandidatePath[]> {
   // Get relationships for current entity
   const relationships = await services.graphdb.getRelationships(
@@ -71,17 +69,15 @@ async function executeHopForCandidate(
     return [];
   }
 
-  // Score relations against fuzzy terms
+  // Score relations against fuzzy terms and take top k_explore
   const scoredRelations = await scoreRelations(
     directedRels,
     hop.relation,
     hop.direction,
     services,
-    threshold
+    k_explore
   );
 
-  // Don't limit relations here - k only applies to final results
-  // We need to explore all matching relations to find the right targets
   if (scoredRelations.length === 0) {
     return [];
   }
@@ -103,8 +99,7 @@ async function executeHopForCandidate(
     Array.from(targetEntities.values()),
     hop.filter,
     services,
-    k,
-    threshold
+    k_explore
   );
 
   // Build new candidate paths
@@ -151,7 +146,7 @@ async function scoreRelations(
   relationMatch: RelationMatch,
   direction: 'outgoing' | 'incoming',
   services: Services,
-  threshold: number
+  k_explore: number
 ): Promise<ScoredRelation[]> {
   // Determine target IDs based on direction
   const withTargets = relations.map((rel) => ({
@@ -182,7 +177,7 @@ async function scoreRelations(
 
   const termEmbeddings = embeddings.slice(predicates.length);
 
-  // Score each relation
+  // Score each relation (no threshold - take all, then limit by k_explore)
   const scored: ScoredRelation[] = [];
 
   for (const { relation, target_id } of withTargets) {
@@ -196,14 +191,12 @@ async function scoreRelations(
       maxScore = Math.max(maxScore, sim);
     }
 
-    if (maxScore >= threshold) {
-      scored.push({ relation, target_id, score: maxScore });
-    }
+    scored.push({ relation, target_id, score: maxScore });
   }
 
-  // Sort by score descending
+  // Sort by score descending and take top k_explore
   scored.sort((a, b) => b.score - a.score);
-  return scored;
+  return scored.slice(0, k_explore);
 }
 
 /**
@@ -213,8 +206,7 @@ async function applyFilter(
   entities: Entity[],
   filter: Filter | null,
   services: Services,
-  k: number,
-  threshold: number
+  k_explore: number
 ): Promise<Array<{ entity: Entity; filterScore?: number }>> {
   if (!filter) {
     return entities.map((e) => ({ entity: e }));
@@ -233,17 +225,17 @@ async function applyFilter(
 
   if (filter.type === 'semantic_search') {
     // Query Pinecone filtered to only these entity IDs, using text directly
+    // Returns top k_explore matches sorted by score
     const ids = entities.map((e) => e.canonical_id);
     const matches = await services.pinecone.queryByIdsWithText(
       filter.text,
       ids,
-      k
+      k_explore
     );
 
-    // Build result with scores
+    // Build result with scores (already limited by k_explore from Pinecone)
     const result: Array<{ entity: Entity; filterScore: number }> = [];
     for (const match of matches) {
-      if (match.score < threshold) continue;
       const entity = entities.find((e) => e.canonical_id === match.id);
       if (entity) {
         result.push({ entity, filterScore: match.score });
@@ -262,17 +254,17 @@ async function applyFilter(
     }
 
     // Step 2: Semantic ranking within type-filtered candidates
+    // Returns top k_explore matches sorted by score
     const ids = typeFiltered.map((e) => e.canonical_id);
     const matches = await services.pinecone.queryByIdsWithText(
       filter.semantic_text,
       ids,
-      k
+      k_explore
     );
 
-    // Build result with scores
+    // Build result with scores (already limited by k_explore from Pinecone)
     const result: Array<{ entity: Entity; filterScore: number }> = [];
     for (const match of matches) {
-      if (match.score < threshold) continue;
       const entity = typeFiltered.find((e) => e.canonical_id === match.id);
       if (entity) {
         result.push({ entity, filterScore: match.score });
