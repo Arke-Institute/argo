@@ -57,8 +57,8 @@ export async function execute(
 
     // Check if this is a variable-depth hop
     if (hop.depth_range) {
-      // Variable-depth hop - returns final results directly
-      // Note: Variable-depth hops should typically be the last hop
+      // Variable-depth hop - BFS exploration within depth range
+      // Results become starting points for subsequent hops (stacked variable-depth)
       candidates = await executeVariableDepthHop(
         candidates,
         hop,
@@ -67,10 +67,6 @@ export async function execute(
         k_explore
       );
       candidatesExplored += candidates.length;
-
-      // Variable-depth returns final results, so we're done
-      // (even if there are more hops after, we treat this as terminal)
-      break;
     } else {
       // Regular single hop
       candidates = await executeHop(candidates, hop, services, k, k_explore);

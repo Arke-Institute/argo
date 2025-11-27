@@ -64,6 +64,14 @@ For exploring multiple hops without specifying exact depth:
 
 **Scoring**: Path scores multiply naturally (similarity < 1.0 = natural decay). No artificial depth penalty.
 
+**Stacking**: Variable-depth hops can be chained with other hops (fixed or variable):
+
+```
+@entity -[*]{,2}-> type:person -[*]{,3}-> type:file
+```
+
+Each segment produces results that become starting points for the next segment. Full paths are tracked across all segments.
+
 ### 3. Node Filters
 
 After an edge, you can filter what entities to include.
@@ -363,46 +371,95 @@ This allows finding entities that are:
 
 ---
 
+### Example 9: Variable-Depth
+
+**Query**: "Find all files within 4 hops of Washington"
+
+```
+@george_washington -[*]{,4}-> type:file
+```
+
+**Execution**:
+1. BFS expansion at each depth level (1, 2, 3, 4)
+2. Collect files found at each level
+3. Return closest matches first (closer = higher score)
+
+---
+
+### Example 10: Variable-Depth with Semantic Filter
+
+**Query**: "Find events related to military battles, up to 3 hops"
+
+```
+@george_washington -[*]{1,3}-> type:event ~ "military battle"
+```
+
+**Execution**:
+1. BFS expansion up to 3 levels
+2. At each level, filter to events and rank by semantic similarity
+3. Continue to max depth (deeper semantic match might beat closer)
+
+---
+
+### Example 11: Stacked Variable-Depth
+
+**Query**: "Find organizations through people connected to the Declaration"
+
+```
+@declaration -[*]{1,2}-> type:person -[*]{,3}-> type:organization
+```
+
+**Execution**:
+1. First segment: Find persons within 1-2 hops of declaration
+2. Those persons become starting points for second segment
+3. Second segment: Find organizations within 1-3 hops of each person
+4. Merge and deduplicate results across all paths
+
+**Result path example**:
+```
+declaration → (SIGNED_BY) → washington → (AFFILIATED_WITH) → continental_congress
+```
+
+---
+
 ## Edge Cases
 
-### No Results at Entry Point
+### Low Similarity Scores
 
-If semantic search returns no results:
+With k-based selection (no threshold), queries always return results even with low semantic similarity. A query like `"xyzzy nonsense"` will still return the top-k most similar entities, potentially with very low scores (e.g., 0.1).
 
-```
-"xyzzy nonsense query" -[*]-> type:person
-```
+**Implication**: Callers should check the `score` field in results to assess confidence. Low scores indicate weak matches.
 
-**Behavior**: Return empty results with metadata indicating "no entry point found".
+### No Entry Point Found
+
+This only occurs when:
+- The Pinecone index is empty
+- For `@id` lookup, the entity doesn't exist in GraphDB
 
 ```json
 {
   "results": [],
   "metadata": {
     "error": "no_entry_point",
-    "message": "Semantic search found no matching entities for 'xyzzy nonsense query'"
+    "message": "No matching entities found for entry point"
   }
 }
 ```
 
-### No Matching Relations
+### No Path Found
 
-If no relations match the fuzzy term:
-
-```
-"George Washington" -[teleported]-> type:place
-```
-
-**Behavior**: Return partial path showing where traversal stopped.
+This occurs when:
+- An entity has no relationships in the specified direction
+- A type filter excludes all candidates at some hop
 
 ```json
 {
   "results": [],
   "metadata": {
-    "partial_path": [{ "entity": "george_washington", "label": "George Washington" }],
+    "error": "no_path_found",
+    "reason": "Traversal stopped at hop 1 - no matching relations or entities",
     "stopped_at_hop": 1,
-    "reason": "no_matching_relations",
-    "available_relations": ["BORN_ON", "AFFILIATED_WITH", "MENTIONED_IN", ...]
+    "partial_path": [{ "entity": "george_washington", "label": "George Washington" }]
   }
 }
 ```
@@ -531,13 +588,15 @@ interface Metadata {
 
 ---
 
-## Future Extensions (Out of Scope for v1)
+## Future Extensions
 
+These features are not yet implemented:
+
+- **Bidirectional edges**: `<-[*]->` (follow edges in both directions simultaneously)
 - **Intersection queries**: Find entities connected to multiple entry points
 - **Property filters**: `type:person{country: "USA"}`
 - **Negation**: `-[!enemy]->` (relations NOT matching)
 - **Optional edges**: `-[born]->?` (zero or one hop)
-- **Variable-length paths**: `-[knows*2..4]->` (2 to 4 hops of same relation)
 - **Named captures**: `"Washington" as $w -[*]-> $w` (backreferences)
 - **Aggregations**: Count, group by, etc.
 
@@ -556,7 +615,13 @@ interface Metadata {
 - Each hop multiplies candidates by k
 - 3 hops with k=3: up to 27 paths
 - 5 hops with k=3: up to 243 paths
-- Consider pruning low-scoring paths mid-traversal
+- Beam search prunes low-scoring paths automatically
+
+### Safety Limits
+
+- **MAX_TOTAL_CANDIDATES = 1000**: Variable-depth traversal stops if this limit is reached
+- **DEFAULT_MAX_DEPTH = 4**: Used for unbounded `{2,}` syntax
+- **k_explore**: Limits candidates explored per hop (default: k × 3)
 
 ### LLM Integration
 

@@ -222,6 +222,32 @@ const testCases: TestCase[] = [
   },
 
   // ============================================================================
+  // Stacked variable-depth (Phase 4)
+  // ============================================================================
+  {
+    name: 'Stacked variable-depth: two segments',
+    description: 'Find organizations through people connected to declaration',
+    path: `@${PREFIX}declaration -[*]{1,2}-> type:person -[*]{,3}-> type:organization`,
+    expected: {
+      minResults: 1,
+      // declaration → person (1 hop) → organization (1 hop)
+      containsEntity: `${PREFIX}continental_congress`,
+      containsType: 'organization',
+    },
+  },
+
+  {
+    name: 'Stacked: variable-depth then fixed hop',
+    description: 'Variable depth segment followed by fixed hop',
+    path: `@${PREFIX}declaration -[*]{1,2}-> type:person -[born]-> type:date`,
+    expected: {
+      minResults: 1,
+      // declaration → person → date
+      containsType: 'date',
+    },
+  },
+
+  // ============================================================================
   // Parse error
   // ============================================================================
   {

@@ -2,6 +2,10 @@
 
 A graph traversal engine for the Thalassa knowledge graph with semantic flexibility. Argo enables natural language-like queries over the knowledge graph using fuzzy edge matching and semantic search.
 
+Deployed link-search worker
+https://link-search.nick-chimicles-professional.workers.dev
+argo.arke.institute (custom domain)
+
 ## Quick Start
 
 ```bash
@@ -162,6 +166,9 @@ Content-Type: application/json
 
 # Variable-depth with semantic filter
 @george_washington -[*]{1,3}-> type:event ~ "military battle"
+
+# Stacked variable-depth: find orgs through people
+@declaration -[*]{1,2}-> type:person -[*]{,3}-> type:organization
 ```
 
 ## Architecture
@@ -175,7 +182,6 @@ Argo is a Cloudflare Worker that connects to:
 
 - [PATH_QUERY_SPEC.md](./PATH_QUERY_SPEC.md) - Full query language specification
 - [QUERYING_GUIDE.md](./QUERYING_GUIDE.md) - Guide for querying the knowledge graph
-- [PATH_QUERY_V2_SPEC.md](./PATH_QUERY_V2_SPEC.md) - Upcoming v2 features (variable-depth, guided search)
 
 ## Development
 
