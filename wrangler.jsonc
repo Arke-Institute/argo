@@ -3,6 +3,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2024-11-01",
   "compatibility_flags": ["nodejs_compat"],
+
+  "workers_dev": true,
+
   "services": [
     {
       "binding": "EMBEDDING_GATEWAY",
@@ -15,6 +18,13 @@
     {
       "binding": "PINECONE_GATEWAY",
       "service": "pinecone-gateway"
+    }
+  ],
+
+  "routes": [
+    {
+      "pattern": "argo.arke.institute",
+      "custom_domain": true
     }
   ]
 }
