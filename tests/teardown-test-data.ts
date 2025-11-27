@@ -1,7 +1,8 @@
 /**
  * Teardown test data for Argo path query tests
  *
- * Removes all entities with the argo_test_ prefix
+ * Uses /admin/clear-test-data to remove all nodes containing "test" in their IDs.
+ * This follows the TESTING.md convention for safe, automatic cleanup.
  */
 
 const GRAPHDB_URL = 'https://graphdb-gateway.arke.institute';
@@ -9,7 +10,7 @@ const PINECONE_URL = 'https://pinecone-gateway.arke.institute';
 
 const PREFIX = 'argo_test_';
 
-// List of test entity IDs (must match setup-test-data.ts)
+// List of test entity IDs for Pinecone cleanup (vectors require explicit IDs)
 const testEntityIds = [
   `${PREFIX}george_washington`,
   `${PREFIX}thomas_jefferson`,
@@ -23,23 +24,22 @@ const testEntityIds = [
 ];
 
 async function deleteFromGraphDB(): Promise<void> {
-  console.log('\n🗑️  Deleting entities from GraphDB...\n');
+  console.log('\n🗑️  Clearing test data from GraphDB...\n');
 
-  for (const id of testEntityIds) {
-    const response = await fetch(`${GRAPHDB_URL}/entity/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
+  const response = await fetch(`${GRAPHDB_URL}/admin/clear-test-data`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error(`   ❌ Failed to delete ${id}: ${error}`);
-    } else {
-      const result = await response.json() as { deleted?: boolean };
-      if (result.deleted) {
-        console.log(`   ✓ Deleted ${id}`);
-      } else {
-        console.log(`   - ${id} (not found)`);
-      }
+  if (!response.ok) {
+    const error = await response.text();
+    console.error(`   ❌ Failed to clear test data: ${error}`);
+  } else {
+    const result = await response.json() as { deleted?: number; message?: string };
+    console.log(`   ✓ Cleared test data from GraphDB`);
+    if (result.deleted !== undefined) {
+      console.log(`     Deleted ${result.deleted} nodes`);
     }
   }
 }
@@ -47,7 +47,6 @@ async function deleteFromGraphDB(): Promise<void> {
 async function deleteFromPinecone(): Promise<void> {
   console.log('\n🗑️  Deleting vectors from Pinecone...\n');
 
-  // Pinecone delete by IDs
   const response = await fetch(`${PINECONE_URL}/delete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

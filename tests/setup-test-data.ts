@@ -1,6 +1,9 @@
 /**
  * Setup test data for Argo path query tests
  *
+ * All test IDs contain "test" to enable automatic cleanup via /admin/clear-test-data.
+ * See service_docs/TESTING.md for conventions.
+ *
  * Creates a small test graph with prefixed entities:
  *
  *   argo_test_george_washington (person)

@@ -1,6 +1,9 @@
 /**
  * Test cases for Argo path query engine
  *
+ * All test IDs contain "test" to enable automatic cleanup via /admin/clear-test-data.
+ * See service_docs/TESTING.md for conventions.
+ *
  * Uses test data created by setup-test-data.ts:
  *
  *   argo_test_george_washington (person)
