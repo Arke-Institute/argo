@@ -19,8 +19,10 @@ This document covers everything you need to know about querying the Arke Institu
   - [3.1 Core Entity Properties](#31-core-entity-properties)
   - [3.2 Entity Types](#32-entity-types)
   - [3.3 Date Entities](#33-date-entities)
-  - [3.4 File Entities](#34-file-entities)
-  - [3.5 Canonical IDs](#35-canonical-ids)
+  - [3.4 PI Entities (Collections)](#34-pi-entities-collections)
+  - [3.5 File Entities](#35-file-entities)
+  - [3.6 Entity Type Summary](#36-entity-type-summary)
+  - [3.7 Canonical IDs](#37-canonical-ids)
 - [4. Relationships](#4-relationships)
   - [4.1 Relationship Types](#41-relationship-types)
   - [4.2 Getting Entity Relationships](#42-getting-entity-relationships)
@@ -305,13 +307,205 @@ curl -X POST https://pinecone-gateway.arke.institute/query \
   }'
 ```
 
-### 3.4 File Entities
+### 3.4 PI Entities (Collections)
 
-File entities represent source documents and are **always scoped to their PI**:
+PI entities represent archival collections (IIIF-based Pinax packages). They are the top-level organizational units in the knowledge graph.
 
-- **Canonical ID Format**: `{pi}:{code}` (e.g., `arke:01ABC123:file_001`)
-- **Properties**: Always includes `filename`, may include `mimetype`, `size`
-- **Never merged** across PIs (each PI's files are unique)
+#### PI Entity Structure
+
+**In Neo4j:**
+```cypher
+(:Entity {
+  canonical_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",  // Random UUID (looked up by code)
+  code: "pi_IIKB6Y1SQZDGXDNK0BXGVRW4FJ",                 // pi_{PI_IDENTIFIER}
+  label: "Test Historical Collection",                    // From pinax.title or fallback
+  type: "pi",
+  properties: "{...}",                                    // JSON string with metadata
+  created_by_pi: "IIKB6Y1SQZDGXDNK0BXGVRW4FJ",          // Self-referential
+  first_seen: datetime(),
+  last_updated: datetime()
+})
+```
+
+**Properties JSON may include:**
+```json
+{
+  "pi": "IIKB6Y1SQZDGXDNK0BXGVRW4FJ",
+  "parent_pi": "IIKB5X...",              // If has parent
+  "description": "# About\n\nThis is...", // From description.md
+  "creator": "Test Archive Institute",    // From pinax.json
+  "date_range": "1900-1950",
+  "subjects": ["history", "archives"],
+  "language": "en",
+  "rights": "Public Domain"
+}
+```
+
+**In Pinecone:**
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "values": [0.123, -0.456, ...],
+  "metadata": {
+    "canonical_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "label": "Test Historical Collection",
+    "type": "pi",
+    "source_pi": "IIKB6Y1SQZDGXDNK0BXGVRW4FJ"  // Self-referential
+  }
+}
+```
+
+#### Key Characteristics
+
+- **Code Pattern**: `pi_{PI_IDENTIFIER}`
+- **Self-referential source_pi**: PI entities are their own source
+- **Random UUID**: Canonical ID is a random UUID (looked up by code first, reused if exists)
+- **Two nodes exist**: Both `:PI {id}` node and `:Entity {type: 'pi'}` node
+
+#### Querying PI Entities
+
+**Find all PI entities (Neo4j):**
+```cypher
+MATCH (e:Entity {type: 'pi'})
+RETURN e.canonical_id, e.code, e.label, e.properties
+```
+
+**Find PI entity by identifier (Neo4j):**
+```cypher
+MATCH (e:Entity {code: 'pi_IIKB6Y1SQZDGXDNK0BXGVRW4FJ'})
+RETURN e
+```
+
+**Semantic search for PIs about a topic (Pinecone):**
+```json
+{
+  "vector": [0.123, ...],
+  "filter": { "type": { "$eq": "pi" } },
+  "top_k": 10,
+  "include_metadata": true
+}
+```
+
+**Argo Query DSL:**
+```
+"civil war correspondence military" type:pi
+"medical research clinical studies" -[*]-> type:pi
+```
+
+---
+
+### 3.5 File Entities
+
+File entities represent actual files within collections (notes, images, PDFs, etc.). They use deterministic canonical IDs for efficient deduplication.
+
+#### File Entity Structure
+
+**In Neo4j:**
+```cypher
+(:Entity:File {
+  canonical_id: "24fa5e2f-d110-42d0-6f1b-1e134c57dc2d",  // Deterministic UUID
+  code: "file_notes.md",                                  // file_{filename}
+  label: "Notes",                                         // Human-readable
+  type: "file",
+  properties: "{...}",                                    // JSON string
+  created_by_pi: "IIKB6Y1SQZDGXDNK0BXGVRW4FJ",
+  first_seen: datetime(),
+  last_updated: datetime()
+})
+```
+
+Note: File entities have a `:File` sublabel in addition to `:Entity`.
+
+**Properties JSON:**
+```json
+{
+  "filename": "notes.md",
+  "file_cid": "bafkrei...",           // IPFS CID
+  "content_type": "text"              // "text", "ref_ocr", or "ref_description"
+}
+```
+
+**In Pinecone:**
+```json
+{
+  "id": "24fa5e2f-d110-42d0-6f1b-1e134c57dc2d",
+  "values": [0.123, -0.456, ...],
+  "metadata": {
+    "canonical_id": "24fa5e2f-d110-42d0-6f1b-1e134c57dc2d",
+    "label": "Notes",
+    "type": "file",
+    "source_pi": "IIKB6Y1SQZDGXDNK0BXGVRW4FJ"
+  }
+}
+```
+
+#### Key Characteristics
+
+- **Code Pattern**: `file_{filename}`
+- **Deterministic Canonical ID**: SHA256 hash of `file:{pi}:{filename}` - no lookup needed
+- **Sublabel**: Has `:File` sublabel in Neo4j for efficient filtering
+- **EXTRACTED_FROM relationship**: Links file to its parent PI
+- **Content Types**:
+  - `text` - Direct text content
+  - `ref_ocr` - OCR-processed scanned documents
+  - `ref_description` - Image descriptions
+
+#### File Relationships
+
+```cypher
+// File to PI
+(file:Entity:File)-[:EXTRACTED_FROM]->(pi:PI)
+
+// PI to Files (reverse)
+(pi:Entity {type:'pi'})-[:CONTAINS_FILE]->(file:Entity:File)
+```
+
+#### Querying File Entities
+
+**Find all files (Neo4j):**
+```cypher
+MATCH (f:Entity:File)
+RETURN f.canonical_id, f.code, f.label, f.properties
+```
+
+**Find files for a specific PI (Neo4j):**
+```cypher
+MATCH (f:Entity:File)-[:EXTRACTED_FROM]->(pi:PI {id: $pi})
+RETURN f.canonical_id, f.code, f.label, f.properties
+```
+
+**Find by filename (Neo4j):**
+```cypher
+MATCH (f:Entity:File {code: 'file_notes.md'})
+RETURN f
+```
+
+**Semantic search for files (Pinecone):**
+```json
+{
+  "vector": [0.123, ...],
+  "filter": { "type": { "$eq": "file" } },
+  "top_k": 10,
+  "include_metadata": true
+}
+```
+
+**Files from a specific PI (Pinecone):**
+```json
+{
+  "filter": {
+    "type": { "$eq": "file" },
+    "source_pi": { "$eq": "IIKB6Y1SQZDGXDNK0BXGVRW4FJ" }
+  }
+}
+```
+
+**Argo Query DSL:**
+```
+"patient records medical documents" type:file
+@pi_entity_id -[contains_file]-> type:file
+@file_entity_id -[extracted_from]-> type:pi
+```
 
 #### Getting Files from a PI
 
@@ -324,7 +518,26 @@ curl -X POST https://graphdb-gateway.arke.institute/entities/list \
   }'
 ```
 
-### 3.5 Canonical IDs
+---
+
+### 3.6 Entity Type Summary
+
+| Type   | Code Pattern      | Label Source       | Canonical ID       | source_pi        |
+|--------|-------------------|--------------------|--------------------|------------------|
+| person | `john_doe`        | cheimarros.json    | Random UUID        | PI where extracted |
+| event  | `seneca_falls`    | cheimarros.json    | Random UUID        | PI where extracted |
+| org    | `acme_corp`       | cheimarros.json    | Random UUID        | PI where extracted |
+| date   | `date_YYYY_MM_DD` | Human-readable     | Deterministic      | PI where extracted |
+| pi     | `pi_{PI}`         | pinax.title        | Random UUID*       | Self (same PI)   |
+| file   | `file_{filename}` | Filename converted | Deterministic hash | PI containing file |
+
+*PI canonical IDs are looked up by code first; if exists, reused.
+
+**Canonical ID Generation:**
+- **Random UUID**: Looked up by code, created if not exists (person, event, org, pi)
+- **Deterministic**: Generated from content, no lookup needed (date: from date value, file: from `file:{pi}:{filename}`)
+
+### 3.7 Canonical IDs
 
 The `canonical_id` is the globally unique identifier for an entity. Understanding its format helps with querying:
 
