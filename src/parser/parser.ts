@@ -12,6 +12,7 @@ import type {
   Filter,
   DepthRange,
 } from './types';
+// Filter is used in parse() for entry_filter
 
 export class ParseError extends Error {
   constructor(
@@ -64,6 +65,26 @@ export class Parser {
 
   parse(): PathAST {
     const entry = this.parseEntryPoint();
+
+    // Check for optional entry filter (zero-hop query)
+    // This allows: "semantic search" type:person
+    // or: "semantic search" type:person ~ "ranking text"
+    let entry_filter: Filter | undefined;
+    const filterToken = this.current();
+    if (
+      filterToken.type === 'TYPE_FILTER' ||
+      filterToken.type === 'QUOTED_STRING' ||
+      filterToken.type === 'AT_ID'
+    ) {
+      // Only parse as entry filter if NOT followed by arrow (which would start a hop)
+      const next = this.peek(1);
+      const isArrowStart =
+        next.type === 'ARROW_OUT_START' || next.type === 'ARROW_IN_START';
+      if (!isArrowStart) {
+        entry_filter = this.parseFilter() ?? undefined;
+      }
+    }
+
     const hops: Hop[] = [];
 
     while (!this.isAtEnd()) {
@@ -75,7 +96,7 @@ export class Parser {
       }
     }
 
-    return { entry, hops };
+    return { entry, entry_filter, hops };
   }
 
   private parseEntryPoint(): EntryPoint {

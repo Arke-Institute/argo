@@ -36,6 +36,7 @@ export interface Token {
 
 export interface PathAST {
   entry: EntryPoint;
+  entry_filter?: Filter; // Optional filter applied directly to entry point (zero-hop query)
   hops: Hop[];
 }
 

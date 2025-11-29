@@ -11,7 +11,7 @@ import type {
   CandidatePath,
 } from '../types';
 import type { PathAST } from '../parser/types';
-import { resolveEntry } from './entry';
+import { resolveEntry, applyEntryFilter } from './entry';
 import { executeHop } from './traverse';
 import { executeVariableDepthHop } from './variable-depth';
 
@@ -48,6 +48,28 @@ export async function execute(
       'no_entry_point',
       `No matching entities found for entry point`
     );
+  }
+
+  // Apply entry filter if present (zero-hop query support)
+  if (ast.entry_filter) {
+    candidates = await applyEntryFilter(candidates, ast.entry_filter, services);
+    candidatesExplored += candidates.length;
+
+    // If this is a zero-hop query (no hops), return results now
+    if (ast.hops.length === 0) {
+      const results = buildResults(candidates, k);
+      return {
+        results,
+        metadata: {
+          query: params.path || '',
+          hops: 0,
+          k,
+          k_explore,
+          total_candidates_explored: candidatesExplored,
+          execution_time_ms: Date.now() - startTime,
+        },
+      };
+    }
   }
 
   // Execute each hop
@@ -183,5 +205,5 @@ function buildPartialResult(
   };
 }
 
-export { resolveEntry } from './entry';
+export { resolveEntry, applyEntryFilter } from './entry';
 export { executeHop } from './traverse';

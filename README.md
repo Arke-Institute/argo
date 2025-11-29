@@ -140,6 +140,24 @@ Content-Type: application/json
 | `@id` | Exact entity match | `@mount_vernon` |
 | `"text"` | Semantic filter | `"historical event"` |
 
+### Zero-Hop Queries (Direct Entity Search)
+
+Zero-hop queries find entities without traversing edges. Use these when you want to find entities directly by semantic similarity and type, without any relationship traversal.
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `"text" type:typename` | Semantic search filtered by type | `"physician doctor" type:person` |
+| `"text" type:typename ~ "text"` | Semantic search + type + re-ranking | `"medical" type:person ~ "author"` |
+
+**When to use zero-hop queries:**
+- Finding entities by description without knowing their connections
+- "Who are the physicians?" → `"physician doctor author" type:person`
+- "What documents mention diplomacy?" → `"diplomacy treaty" type:document`
+
+**When to use edge traversal instead:**
+- Finding things connected to a known entity: `@spigelia <-[treated_with]- type:document`
+- Multi-hop exploration: `@academy <-[affiliated]- type:person -[authored]-> type:document`
+
 ### Example Queries
 
 ```bash
@@ -169,6 +187,12 @@ Content-Type: application/json
 
 # Stacked variable-depth: find orgs through people
 @declaration -[*]{1,2}-> type:person -[*]{,3}-> type:organization
+
+# Zero-hop: find physicians directly
+"physician doctor author" type:person
+
+# Zero-hop with re-ranking
+"medical professional" type:person ~ "researcher author"
 ```
 
 ## Architecture

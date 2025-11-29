@@ -4,7 +4,7 @@
 
 import type { Services } from '../services';
 import type { CandidatePath } from '../types';
-import type { EntryPoint } from '../parser/types';
+import type { EntryPoint, Filter } from '../parser/types';
 
 /**
  * Resolve the entry point of a path query
@@ -88,4 +88,80 @@ async function resolveSemanticSearch(
   }
 
   return candidates;
+}
+
+/**
+ * Apply entry filter to candidates (for zero-hop queries)
+ * Filters and/or re-ranks candidates based on the filter type
+ */
+export async function applyEntryFilter(
+  candidates: CandidatePath[],
+  filter: Filter,
+  services: Services
+): Promise<CandidatePath[]> {
+  switch (filter.type) {
+    case 'type_filter':
+      // Filter by entity type
+      return candidates.filter(
+        (c) => c.current_entity.type === filter.value
+      );
+
+    case 'exact_id':
+      // Filter to just the specified entity
+      return candidates.filter(
+        (c) => c.current_entity.canonical_id === filter.id
+      );
+
+    case 'semantic_search':
+      // Re-rank by semantic similarity to filter text
+      return reRankBySemantic(candidates, filter.text, services);
+
+    case 'combined_filter':
+      // Filter by type first, then re-rank semantically
+      const typeFiltered = candidates.filter(
+        (c) => c.current_entity.type === filter.type_value
+      );
+      return reRankBySemantic(typeFiltered, filter.semantic_text, services);
+
+    default:
+      return candidates;
+  }
+}
+
+/**
+ * Re-rank candidates by semantic similarity to text
+ * Uses Pinecone's query-by-ids endpoint to compute similarity server-side
+ */
+async function reRankBySemantic(
+  candidates: CandidatePath[],
+  text: string,
+  services: Services
+): Promise<CandidatePath[]> {
+  if (candidates.length === 0) return candidates;
+
+  // Get IDs and query Pinecone for similarity scores
+  const ids = candidates.map((c) => c.current_entity.canonical_id);
+  const matches = await services.pinecone.queryByIdsWithText(text, ids);
+
+  // Create a map of id -> similarity score
+  const scoreMap = new Map(matches.map((m) => [m.id, m.score]));
+
+  // Update candidates with semantic scores
+  const scored = candidates.map((candidate) => {
+    const similarity = scoreMap.get(candidate.current_entity.canonical_id) ?? 0;
+    // Combine original score with semantic similarity (favor semantic)
+    const combinedScore = candidate.score * 0.3 + similarity * 0.7;
+    return {
+      ...candidate,
+      score: combinedScore,
+      path: candidate.path.map((p, i) =>
+        i === candidate.path.length - 1
+          ? { ...p, semantic_score: similarity }
+          : p
+      ),
+    };
+  });
+
+  // Sort by combined score
+  return scored.sort((a, b) => b.score - a.score);
 }
