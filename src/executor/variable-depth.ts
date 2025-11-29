@@ -14,6 +14,7 @@ interface ScoredRelation {
   relation: Relationship;
   target_id: string;
   score: number;
+  actual_direction: 'outgoing' | 'incoming';
 }
 
 /**
@@ -94,7 +95,7 @@ export async function executeVariableDepthHop(
  */
 async function expandOneLevel(
   candidates: CandidatePath[],
-  direction: 'outgoing' | 'incoming',
+  direction: 'outgoing' | 'incoming' | 'bidirectional',
   relation: RelationMatch,
   services: Services,
   k_explore: number
@@ -107,23 +108,44 @@ async function expandOneLevel(
       candidate.current_entity.canonical_id
     );
 
-    const directedRels =
-      direction === 'outgoing'
-        ? relationships.outgoing
-        : relationships.incoming;
+    // Collect scored relations from relevant direction(s)
+    let scoredRels: ScoredRelation[] = [];
 
-    if (directedRels.length === 0) {
-      continue;
+    if (direction === 'outgoing' || direction === 'bidirectional') {
+      if (relationships.outgoing.length > 0) {
+        const outScored = await scoreRelationsForExpansion(
+          relationships.outgoing,
+          relation,
+          'outgoing',
+          services,
+          k_explore
+        );
+        scoredRels.push(...outScored);
+      }
     }
 
-    // Score relations against fuzzy terms
-    const scoredRels = await scoreRelationsForExpansion(
-      directedRels,
-      relation,
-      direction,
-      services,
-      k_explore
-    );
+    if (direction === 'incoming' || direction === 'bidirectional') {
+      if (relationships.incoming.length > 0) {
+        const inScored = await scoreRelationsForExpansion(
+          relationships.incoming,
+          relation,
+          'incoming',
+          services,
+          k_explore
+        );
+        scoredRels.push(...inScored);
+      }
+    }
+
+    // For bidirectional, re-sort merged results and limit to k_explore
+    if (direction === 'bidirectional' && scoredRels.length > k_explore) {
+      scoredRels.sort((a, b) => b.score - a.score);
+      scoredRels = scoredRels.slice(0, k_explore);
+    }
+
+    if (scoredRels.length === 0) {
+      continue;
+    }
 
     // Get target entities
     const targetIds = scoredRels.map((r) => r.target_id);
@@ -148,7 +170,7 @@ async function expandOneLevel(
 
       const edgeStep: PathStep = {
         edge: scored.relation.predicate,
-        direction,
+        direction: scored.actual_direction,
         score: scored.score,
       };
 
@@ -184,6 +206,7 @@ async function scoreRelationsForExpansion(
   const withTargets = relations.map((rel) => ({
     relation: rel,
     target_id: direction === 'outgoing' ? rel.object_id : rel.subject_id,
+    actual_direction: direction,
   }));
 
   // If wildcard, return ALL with score 1.0 (no k_explore limit for wildcards)
@@ -212,7 +235,7 @@ async function scoreRelationsForExpansion(
   // Score each relation
   const scored: ScoredRelation[] = [];
 
-  for (const { relation, target_id } of withTargets) {
+  for (const { relation, target_id, actual_direction } of withTargets) {
     const predEmb = predicateEmbeddings.get(relation.predicate);
     if (!predEmb) continue;
 
@@ -223,7 +246,7 @@ async function scoreRelationsForExpansion(
       maxScore = Math.max(maxScore, sim);
     }
 
-    scored.push({ relation, target_id, score: maxScore });
+    scored.push({ relation, target_id, score: maxScore, actual_direction });
   }
 
   // Sort by score descending and take top k_explore (for fuzzy relations)

@@ -248,6 +248,56 @@ const testCases: TestCase[] = [
   },
 
   // ============================================================================
+  // Bidirectional traversal
+  // ============================================================================
+  {
+    name: 'Bidirectional - single hop wildcard',
+    description: 'Find anything connected to continental congress in either direction',
+    path: `@${PREFIX}continental_congress <-[*]-> type:person`,
+    expected: {
+      minResults: 2,
+      // Should find both washington and jefferson (via incoming AFFILIATED_WITH)
+      containsEntity: `${PREFIX}george_washington`,
+      containsType: 'person',
+    },
+  },
+
+  {
+    name: 'Bidirectional - single hop with relation terms',
+    description: 'Find entities connected via affiliation in either direction',
+    path: `@${PREFIX}continental_congress <-[affiliated, member]-> type:person`,
+    expected: {
+      minResults: 1,
+      containsEntity: `${PREFIX}thomas_jefferson`,
+      containsType: 'person',
+    },
+  },
+
+  {
+    name: 'Bidirectional - variable depth',
+    description: 'Find people within 2 hops of declaration in either direction',
+    path: `@${PREFIX}declaration <-[*]{1,2}-> type:person`,
+    expected: {
+      minResults: 1,
+      // Depth 1: jefferson, washington via AUTHORED_BY, SIGNED_BY
+      containsEntity: `${PREFIX}thomas_jefferson`,
+      containsType: 'person',
+    },
+  },
+
+  {
+    name: 'Bidirectional variable depth - find dates',
+    description: 'Find dates connected within 2 hops in either direction',
+    path: `@${PREFIX}george_washington <-[*]{1,2}-> type:date`,
+    expected: {
+      minResults: 1,
+      // Depth 1 outgoing: date via BORN_ON
+      containsEntity: `${PREFIX}date_1732_02_22`,
+      containsType: 'date',
+    },
+  },
+
+  // ============================================================================
   // Parse error
   // ============================================================================
   {

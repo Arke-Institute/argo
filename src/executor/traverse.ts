@@ -16,6 +16,7 @@ interface ScoredRelation {
   relation: Relationship;
   target_id: string;
   score: number;
+  actual_direction: 'outgoing' | 'incoming';
 }
 
 /**
@@ -59,24 +60,44 @@ async function executeHopForCandidate(
     candidate.current_entity.canonical_id
   );
 
-  // Filter by direction
-  const directedRels =
-    hop.direction === 'outgoing'
-      ? relationships.outgoing
-      : relationships.incoming;
+  // Collect scored relations from relevant direction(s)
+  let scoredRelations: ScoredRelation[] = [];
 
-  if (directedRels.length === 0) {
+  if (hop.direction === 'outgoing' || hop.direction === 'bidirectional') {
+    if (relationships.outgoing.length > 0) {
+      const outScored = await scoreRelations(
+        relationships.outgoing,
+        hop.relation,
+        'outgoing',
+        services,
+        k_explore
+      );
+      scoredRelations.push(...outScored);
+    }
+  }
+
+  if (hop.direction === 'incoming' || hop.direction === 'bidirectional') {
+    if (relationships.incoming.length > 0) {
+      const inScored = await scoreRelations(
+        relationships.incoming,
+        hop.relation,
+        'incoming',
+        services,
+        k_explore
+      );
+      scoredRelations.push(...inScored);
+    }
+  }
+
+  if (scoredRelations.length === 0) {
     return [];
   }
 
-  // Score relations against fuzzy terms and take top k_explore
-  const scoredRelations = await scoreRelations(
-    directedRels,
-    hop.relation,
-    hop.direction,
-    services,
-    k_explore
-  );
+  // For bidirectional, re-sort merged results and limit to k_explore
+  if (hop.direction === 'bidirectional') {
+    scoredRelations.sort((a, b) => b.score - a.score);
+    scoredRelations = scoredRelations.slice(0, k_explore);
+  }
 
   if (scoredRelations.length === 0) {
     return [];
@@ -116,7 +137,7 @@ async function executeHopForCandidate(
 
     const edgeStep: PathStep = {
       edge: scored.relation.predicate,
-      direction: hop.direction,
+      direction: scored.actual_direction,
       score: scored.score,
     };
 
@@ -152,6 +173,7 @@ async function scoreRelations(
   const withTargets = relations.map((rel) => ({
     relation: rel,
     target_id: direction === 'outgoing' ? rel.object_id : rel.subject_id,
+    actual_direction: direction,
   }));
 
   // If wildcard, return all with score 1.0
@@ -180,7 +202,7 @@ async function scoreRelations(
   // Score each relation (no threshold - take all, then limit by k_explore)
   const scored: ScoredRelation[] = [];
 
-  for (const { relation, target_id } of withTargets) {
+  for (const { relation, target_id, actual_direction } of withTargets) {
     const predEmb = predicateEmbeddings.get(relation.predicate);
     if (!predEmb) continue;
 
@@ -191,7 +213,7 @@ async function scoreRelations(
       maxScore = Math.max(maxScore, sim);
     }
 
-    scored.push({ relation, target_id, score: maxScore });
+    scored.push({ relation, target_id, score: maxScore, actual_direction });
   }
 
   // Sort by score descending and take top k_explore

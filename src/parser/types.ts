@@ -45,7 +45,7 @@ export type EntryPoint =
   | { type: 'exact_id'; id: string };
 
 export interface Hop {
-  direction: 'outgoing' | 'incoming';
+  direction: 'outgoing' | 'incoming' | 'bidirectional';
   relation: RelationMatch;
   filter: Filter | null;
   depth_range?: DepthRange;

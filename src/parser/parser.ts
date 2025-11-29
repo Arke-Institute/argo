@@ -129,8 +129,7 @@ export class Parser {
       return null;
     }
 
-    const direction: 'outgoing' | 'incoming' =
-      token.type === 'ARROW_OUT_START' ? 'outgoing' : 'incoming';
+    const startsIncoming = token.type === 'ARROW_IN_START';
     this.advance();
 
     // Parse relation
@@ -142,11 +141,24 @@ export class Parser {
     // Parse optional depth range (between ] and -> or -)
     const depth_range = this.parseDepthRange();
 
-    // Expect arrow end: -> for outgoing, - for incoming
-    if (direction === 'outgoing') {
-      this.expect('ARROW_OUT');
-    } else {
+    // Determine direction from start + end token combination
+    // <-[...]-> = bidirectional
+    // <-[...]- = incoming
+    // -[...]-> = outgoing
+    let direction: 'outgoing' | 'incoming' | 'bidirectional';
+
+    if (startsIncoming && this.current().type === 'ARROW_OUT') {
+      // <-[...]-> = bidirectional
+      direction = 'bidirectional';
+      this.advance();
+    } else if (startsIncoming) {
+      // <-[...]- = incoming
+      direction = 'incoming';
       this.expect('DASH');
+    } else {
+      // -[...]-> = outgoing
+      direction = 'outgoing';
+      this.expect('ARROW_OUT');
     }
 
     // Parse optional filter
