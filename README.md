@@ -64,7 +64,13 @@ Content-Type: application/json
 {
   "path": "@george_washington -[born]-> type:date",
   "k": 5,
-  "k_explore": 15
+  "k_explore": 15,
+  "lineage": {
+    "sourcePi": "arke:my_collection",
+    "direction": "descendants"
+  },
+  "enrich": true,
+  "enrich_limit": 2000
 }
 ```
 
@@ -73,6 +79,9 @@ Content-Type: application/json
 | `path` | string | required | The path query to execute |
 | `k` | int | 5 | Number of final results to return |
 | `k_explore` | int | `k * 3` | Beam width for exploration (candidates per hop) |
+| `lineage` | object | null | Scope query to a PI hierarchy (see Lineage Filtering) |
+| `enrich` | bool | false | Fetch content for PI and File entities |
+| `enrich_limit` | int | 2000 | Max characters per entity when enriching |
 
 **Response:**
 ```json
@@ -82,7 +91,14 @@ Content-Type: application/json
       "entity": {
         "canonical_id": "date_1732_02_22",
         "label": "February 22, 1732",
-        "type": "date"
+        "type": "date",
+        "properties": {},
+        "source_pis": ["arke:my_collection"],
+        "content": {
+          "text": "Document content here...",
+          "format": "text",
+          "truncated": false
+        }
       },
       "path": [
         { "entity": "george_washington", "label": "George Washington", "type": "person" },
@@ -98,7 +114,13 @@ Content-Type: application/json
     "k": 5,
     "k_explore": 15,
     "total_candidates_explored": 1,
-    "execution_time_ms": 245
+    "execution_time_ms": 245,
+    "lineage": {
+      "sourcePi": "arke:my_collection",
+      "direction": "descendants",
+      "piCount": 15,
+      "truncated": false
+    }
   }
 }
 ```
@@ -118,8 +140,10 @@ Content-Type: application/json
 |--------|-------------|
 | `-[term]->` | Outgoing edge with fuzzy match |
 | `<-[term]-` | Incoming edge with fuzzy match |
+| `<-[term]->` | Bidirectional (both directions) |
 | `-[term1, term2]->` | Match ANY of the terms |
 | `-[*]->` | Wildcard (any relation) |
+| `<-[*]->` | Bidirectional wildcard |
 
 ### Variable-Depth Traversal
 
@@ -193,6 +217,93 @@ Zero-hop queries find entities without traversing edges. Use these when you want
 
 # Zero-hop with re-ranking
 "medical professional" type:person ~ "researcher author"
+```
+
+## Lineage Filtering
+
+Scope queries to entities within a PI (Processing Instance) hierarchy. This restricts results to a specific data source or collection.
+
+```json
+{
+  "path": "\"physician\" type:person",
+  "lineage": {
+    "sourcePi": "arke:drexel_collection",
+    "direction": "descendants"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sourcePi` | string | The PI to start lineage resolution from |
+| `direction` | string | `"ancestors"`, `"descendants"`, or `"both"` |
+
+**How it works:**
+1. Before query execution, the lineage API resolves all PIs in the specified direction
+2. Entry point resolution filters Pinecone by `source_pi $in [allowed_pis]`
+3. Each hop filters relationships and entities by source PI
+4. Results only include data from the allowed PI hierarchy
+
+**Use cases:**
+- Scope to a collection: `"direction": "descendants"` from a collection PI
+- Find provenance: `"direction": "ancestors"` to trace data sources
+- Full context: `"direction": "both"` for complete lineage
+
+## Content Enrichment
+
+Fetch actual content for File and PI entities in results.
+
+```json
+{
+  "path": "@some_document",
+  "enrich": true,
+  "enrich_limit": 5000
+}
+```
+
+**For File entities** (based on `content_type`):
+- `text`: Raw text content from IPFS
+- `ref_json`, `ref_*`: Parsed JSON blob with structured data
+
+```json
+{
+  "content": {
+    "text": "Document content here...",
+    "format": "text",
+    "truncated": false
+  }
+}
+```
+
+**For PI entities**:
+- Fetches manifest metadata from IPFS
+
+```json
+{
+  "content": {
+    "pinx": "drexel",
+    "description": "Historical documents from Drexel University",
+    "manifest": {
+      "version": 1,
+      "children_count": 15
+    }
+  }
+}
+```
+
+## Bidirectional Traversal
+
+Follow edges in both directions simultaneously using `<-[...]->` syntax:
+
+```bash
+# Find all entities connected to Spigelia in any direction
+@drexel_test_spigelia <-[*]->
+
+# Find family connections in both directions
+@george_washington <-[family, relative]-> type:person
+
+# Variable depth bidirectional
+@entity <-[*]{1,3}-> type:document
 ```
 
 ## Architecture
