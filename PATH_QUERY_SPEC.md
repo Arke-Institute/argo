@@ -37,11 +37,15 @@ Edges connect entities and specify direction and relation matching.
 |--------|-------------|
 | `-[term]->` | Outgoing edge with fuzzy relation match |
 | `<-[term]-` | Incoming edge with fuzzy relation match |
+| `<-[term]->` | Bidirectional edge (both directions) |
 | `-[term1, term2]->` | Outgoing edge matching ANY of the terms |
 | `-[*]->` | Outgoing edge with any relation (wildcard) |
 | `<-[*]-` | Incoming edge with any relation (wildcard) |
+| `<-[*]->` | Bidirectional wildcard (any relation, both directions) |
 
 **Fuzzy relation matching**: The term(s) in brackets are embedded and compared against the actual relation predicates in the graph. The top-k most similar relations are followed.
+
+**Bidirectional traversal**: The `<-[...]->` syntax follows edges in both directions simultaneously. Outgoing and incoming edges are processed separately, merged, and deduplicated. Each edge in the result path records its actual direction (`outgoing` or `incoming`).
 
 **Example**: `-[born, birth]->` will match relations like `BORN_ON`, `BIRTH_DATE`, `DATE_OF_BIRTH`, etc.
 
@@ -90,7 +94,21 @@ After an edge, you can filter what entities to include.
 
 **Semantic filter** (quoted text at a non-entry position) ranks the candidate entities by semantic similarity to the text. This is different from entry-point search: it searches *within* the candidates found by traversal, not the whole index.
 
-### 4. Chain Structure
+### 4. Zero-Hop Queries
+
+A filter can be applied directly to the entry point without any edge traversal. This is useful for disambiguating semantic searches.
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `"text" type:X` | Semantic search filtered by type | `"Washington" type:person` |
+| `"text" type:X ~ "ranking"` | Type filter + semantic ranking | `"letter" type:file ~ "correspondence"` |
+| `@id type:X` | Exact lookup verified by type | `@washington type:person` |
+
+**Zero-hop queries** solve the semantic disambiguation problem where edge traversal would find connected entities rather than direct matches. For example, `"Washington" type:person` returns persons matching "Washington" directly, rather than traversing to connected entities.
+
+**Execution**: The entry point is resolved normally (semantic search or exact lookup), then the filter is applied to narrow/rank results without any graph traversal.
+
+### 5. Chain Structure
 
 A complete query is a chain of: `entry_point` followed by one or more `edge + filter` pairs.
 
@@ -105,11 +123,13 @@ The **rightmost position** is always the result target.
 ## Complete Grammar
 
 ```
-query           := entry_point (edge filter?)*
+query           := entry_point entry_filter? (edge filter?)*
 entry_point     := semantic_search | exact_entity
-edge            := outgoing | incoming
+entry_filter    := filter                           // Zero-hop: filter applied directly to entry
+edge            := outgoing | incoming | bidirectional
 outgoing        := "-[" relation "]" depth_range? "->"
 incoming        := "<-[" relation "]" depth_range? "-"
+bidirectional   := "<-[" relation "]" depth_range? "->"
 relation        := "*" | term_list
 term_list       := term ("," term)*
 term            := [a-zA-Z_]+
@@ -138,6 +158,61 @@ integer         := [0-9]+
 |-----------|------|---------|-------------|
 | `k` | int | 5 | Number of final results to return |
 | `k_explore` | int | `k * 3` | Beam width for intermediate traversal (how many candidates to explore at each hop) |
+| `lineage` | object | null | PI lineage filter - scope query to entities within a PI hierarchy |
+| `enrich` | bool | false | Fetch content for PI and File entities in results |
+| `enrich_limit` | int | 2000 | Max characters to fetch per entity when enriching |
+
+### Lineage Filtering
+
+The `lineage` parameter scopes queries to entities and relationships within a PI's hierarchy. This is useful for restricting results to a specific data source or collection.
+
+```json
+{
+  "path": "\"Washington\" type:person",
+  "lineage": {
+    "sourcePi": "arke:drexel_historical_collection",
+    "direction": "descendants"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sourcePi` | string | The PI to start lineage resolution from |
+| `direction` | string | `"ancestors"`, `"descendants"`, or `"both"` |
+
+**Execution**:
+1. Before query execution, the lineage API is called to get all PIs in the specified direction
+2. Entry point resolution filters Pinecone by `source_pi $in [allowed_pis]`
+3. Each hop filters relationships by `source_pi` and entities by `source_pis`
+4. Results only include entities/relationships from the allowed PIs
+
+**Use cases**:
+- Scoping to a single collection: `direction: "descendants"` from a collection PI
+- Finding provenance: `direction: "ancestors"` to find parent PIs
+- Full lineage: `direction: "both"` for complete lineage context
+
+### Content Enrichment
+
+The `enrich` parameter fetches content for PI and File entities in results.
+
+```json
+{
+  "path": "@some_file",
+  "enrich": true,
+  "enrich_limit": 5000
+}
+```
+
+**For File entities**: Fetches content from IPFS based on `content_type`:
+- `text`: Raw text content (truncated to `enrich_limit`)
+- `ref_*`: Parsed JSON blob with structured data
+
+**For PI entities**: Fetches manifest components:
+- `pinx`: Short identifier
+- `description`: Human-readable description
+- `manifest.version`: Manifest version
+- `manifest.children_count`: Number of child PIs
 
 ### Execution Steps
 
@@ -422,6 +497,126 @@ declaration → (SIGNED_BY) → washington → (AFFILIATED_WITH) → continental
 
 ---
 
+### Example 12: Zero-Hop Query
+
+**Query**: "Find people named Washington (direct match, no traversal)"
+
+```
+"Washington" type:person
+```
+
+**Execution**:
+1. Semantic search "Washington" → returns various matches
+2. Filter directly by type:person → only person entities
+3. No edge traversal (zero hops)
+
+**Use case**: Disambiguation - find entities directly rather than connected entities.
+
+---
+
+### Example 13: Zero-Hop with Semantic Ranking
+
+**Query**: "Find letters about correspondence"
+
+```
+"letter" type:file ~ "correspondence"
+```
+
+**Execution**:
+1. Semantic search "letter"
+2. Filter to type:file
+3. Re-rank by semantic similarity to "correspondence"
+
+---
+
+### Example 14: Bidirectional Traversal
+
+**Query**: "Find all persons connected to Washington in any direction"
+
+```
+@george_washington <-[*]-> type:person
+```
+
+**Execution**:
+1. Start from washington entity
+2. Follow ALL edges (both outgoing and incoming)
+3. Filter to persons
+
+**Use case**: Exploring connections without knowing relationship direction.
+
+---
+
+### Example 15: Bidirectional with Relation Terms
+
+**Query**: "Find entities related through family connections"
+
+```
+@george_washington <-[family, relative, spouse, child]-> type:person
+```
+
+**Execution**:
+1. Follow edges matching family-related terms in both directions
+2. Filter to person entities
+
+---
+
+### Example 16: Lineage-Scoped Query
+
+**Query**: "Find people in the Drexel collection"
+
+**Request**:
+```json
+{
+  "path": "\"person\" type:person",
+  "k": 10,
+  "lineage": {
+    "sourcePi": "arke:drexel_historical_collection",
+    "direction": "descendants"
+  }
+}
+```
+
+**Execution**:
+1. Resolve lineage: get all PIs descended from drexel_historical_collection
+2. Semantic search "person" filtered to source_pi in lineage
+3. Filter to type:person
+
+---
+
+### Example 17: Enriched File Query
+
+**Query**: "Get files mentioning a topic with content"
+
+**Request**:
+```json
+{
+  "path": "\"Revolutionary War\" <-[*]- type:file",
+  "k": 5,
+  "enrich": true,
+  "enrich_limit": 5000
+}
+```
+
+**Response** (partial):
+```json
+{
+  "results": [{
+    "entity": {
+      "canonical_id": "arke:doc:letter_001",
+      "label": "Letter from Washington",
+      "type": "file",
+      "content": {
+        "text": "Dear Sir, I write to inform you of our victory...",
+        "format": "text",
+        "truncated": false
+      }
+    }
+  }]
+}
+```
+
+---
+
 ## Edge Cases
 
 ### Low Similarity Scores
@@ -559,6 +754,7 @@ interface Result {
 interface PathStep {
   entity?: string;      // canonical_id
   label?: string;       // Human-readable
+  type?: string;        // Entity type
   edge?: string;        // Relation predicate
   direction?: "outgoing" | "incoming";
   score?: number;       // Score for this hop
@@ -570,6 +766,32 @@ interface Entity {
   type: string;
   properties: Record<string, any>;
   source_pis: string[];
+  content?: EnrichedContent;  // Present when enrich=true
+}
+
+interface EnrichedContent {
+  // For files with content_type: text
+  text?: string;
+
+  // For files with ref_* types - parsed JSON blob
+  data?: Record<string, unknown>;
+
+  // Fallback if JSON parsing fails
+  raw?: string;
+
+  // For PIs - fetched from manifest components
+  pinx?: string | null;
+  description?: string | null;
+  manifest?: {
+    version?: number;
+    children_count?: number;
+  };
+
+  // Metadata
+  format?: "text" | "json" | "raw";
+  truncated?: boolean;
+  parse_error?: boolean;
+  fetch_error?: string;
 }
 
 interface Metadata {
@@ -583,6 +805,14 @@ interface Metadata {
   partial_path?: PathStep[];
   stopped_at_hop?: number;
   reason?: string;
+  lineage?: LineageMetadata;  // Present when lineage filter used
+}
+
+interface LineageMetadata {
+  sourcePi: string;
+  direction: string;
+  piCount: number;
+  truncated: boolean;
 }
 ```
 
@@ -592,7 +822,6 @@ interface Metadata {
 
 These features are not yet implemented:
 
-- **Bidirectional edges**: `<-[*]->` (follow edges in both directions simultaneously)
 - **Intersection queries**: Find entities connected to multiple entry points
 - **Property filters**: `type:person{country: "USA"}`
 - **Negation**: `-[!enemy]->` (relations NOT matching)
