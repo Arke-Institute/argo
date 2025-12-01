@@ -103,114 +103,140 @@ async function expandOneLevel(
   k_explore: number,
   allowedPis?: string[]
 ): Promise<CandidatePath[]> {
+  // Process all candidates in parallel
+  const expandedArrays = await Promise.all(
+    candidates.map((candidate) =>
+      expandCandidateOneLevel(
+        candidate,
+        direction,
+        relation,
+        services,
+        k_explore,
+        allowedPis
+      )
+    )
+  );
+
+  return expandedArrays.flat();
+}
+
+/**
+ * Expand a single candidate by one hop
+ */
+async function expandCandidateOneLevel(
+  candidate: CandidatePath,
+  direction: 'outgoing' | 'incoming' | 'bidirectional',
+  relation: RelationMatch,
+  services: Services,
+  k_explore: number,
+  allowedPis?: string[]
+): Promise<CandidatePath[]> {
+  // Get relationships for current entity
+  const relationships = await services.graphdb.getRelationships(
+    candidate.current_entity.canonical_id
+  );
+
+  // Filter relationships by allowed PIs if specified
+  const filteredRelationships = allowedPis
+    ? {
+        outgoing: relationships.outgoing.filter((r) =>
+          allowedPis.includes(r.source_pi)
+        ),
+        incoming: relationships.incoming.filter((r) =>
+          allowedPis.includes(r.source_pi)
+        ),
+      }
+    : relationships;
+
+  // Collect scored relations from relevant direction(s)
+  let scoredRels: ScoredRelation[] = [];
+
+  if (direction === 'outgoing' || direction === 'bidirectional') {
+    if (filteredRelationships.outgoing.length > 0) {
+      const outScored = await scoreRelationsForExpansion(
+        filteredRelationships.outgoing,
+        relation,
+        'outgoing',
+        services,
+        k_explore
+      );
+      scoredRels.push(...outScored);
+    }
+  }
+
+  if (direction === 'incoming' || direction === 'bidirectional') {
+    if (filteredRelationships.incoming.length > 0) {
+      const inScored = await scoreRelationsForExpansion(
+        filteredRelationships.incoming,
+        relation,
+        'incoming',
+        services,
+        k_explore
+      );
+      scoredRels.push(...inScored);
+    }
+  }
+
+  // For bidirectional, re-sort merged results and limit to k_explore
+  if (direction === 'bidirectional' && scoredRels.length > k_explore) {
+    scoredRels.sort((a, b) => b.score - a.score);
+    scoredRels = scoredRels.slice(0, k_explore);
+  }
+
+  if (scoredRels.length === 0) {
+    return [];
+  }
+
+  // Get target entities
+  const targetIds = scoredRels.map((r) => r.target_id);
+  const uniqueTargetIds = [...new Set(targetIds)].filter(
+    (id) => !candidate.visited.has(id)
+  );
+
+  if (uniqueTargetIds.length === 0) {
+    return [];
+  }
+
+  const targetEntities = await services.graphdb.getEntities(uniqueTargetIds);
+
+  // Filter entities by allowed PIs if specified
+  const piFilteredEntities = allowedPis
+    ? new Map(
+        [...targetEntities].filter(([_, entity]) =>
+          entity.source_pis.some((pi) => allowedPis.includes(pi))
+        )
+      )
+    : targetEntities;
+
+  // Build expanded candidates (no filter at this stage)
   const expanded: CandidatePath[] = [];
 
-  for (const candidate of candidates) {
-    // Get relationships for current entity
-    const relationships = await services.graphdb.getRelationships(
-      candidate.current_entity.canonical_id
-    );
+  for (const scored of scoredRels) {
+    const entity = piFilteredEntities.get(scored.target_id);
+    if (!entity) continue;
+    if (candidate.visited.has(entity.canonical_id)) continue;
 
-    // Filter relationships by allowed PIs if specified
-    const filteredRelationships = allowedPis
-      ? {
-          outgoing: relationships.outgoing.filter((r) =>
-            allowedPis.includes(r.source_pi)
-          ),
-          incoming: relationships.incoming.filter((r) =>
-            allowedPis.includes(r.source_pi)
-          ),
-        }
-      : relationships;
+    const newVisited = new Set(candidate.visited);
+    newVisited.add(entity.canonical_id);
 
-    // Collect scored relations from relevant direction(s)
-    let scoredRels: ScoredRelation[] = [];
+    const edgeStep: PathStep = {
+      edge: scored.relation.predicate,
+      direction: scored.actual_direction,
+      score: scored.score,
+    };
 
-    if (direction === 'outgoing' || direction === 'bidirectional') {
-      if (filteredRelationships.outgoing.length > 0) {
-        const outScored = await scoreRelationsForExpansion(
-          filteredRelationships.outgoing,
-          relation,
-          'outgoing',
-          services,
-          k_explore
-        );
-        scoredRels.push(...outScored);
-      }
-    }
+    const entityStep: PathStep = {
+      entity: entity.canonical_id,
+      label: entity.label,
+      type: entity.type,
+    };
 
-    if (direction === 'incoming' || direction === 'bidirectional') {
-      if (filteredRelationships.incoming.length > 0) {
-        const inScored = await scoreRelationsForExpansion(
-          filteredRelationships.incoming,
-          relation,
-          'incoming',
-          services,
-          k_explore
-        );
-        scoredRels.push(...inScored);
-      }
-    }
-
-    // For bidirectional, re-sort merged results and limit to k_explore
-    if (direction === 'bidirectional' && scoredRels.length > k_explore) {
-      scoredRels.sort((a, b) => b.score - a.score);
-      scoredRels = scoredRels.slice(0, k_explore);
-    }
-
-    if (scoredRels.length === 0) {
-      continue;
-    }
-
-    // Get target entities
-    const targetIds = scoredRels.map((r) => r.target_id);
-    const uniqueTargetIds = [...new Set(targetIds)].filter(
-      (id) => !candidate.visited.has(id)
-    );
-
-    if (uniqueTargetIds.length === 0) {
-      continue;
-    }
-
-    const targetEntities = await services.graphdb.getEntities(uniqueTargetIds);
-
-    // Filter entities by allowed PIs if specified
-    const piFilteredEntities = allowedPis
-      ? new Map(
-          [...targetEntities].filter(([_, entity]) =>
-            entity.source_pis.some((pi) => allowedPis.includes(pi))
-          )
-        )
-      : targetEntities;
-
-    // Build expanded candidates (no filter at this stage)
-    for (const scored of scoredRels) {
-      const entity = piFilteredEntities.get(scored.target_id);
-      if (!entity) continue;
-      if (candidate.visited.has(entity.canonical_id)) continue;
-
-      const newVisited = new Set(candidate.visited);
-      newVisited.add(entity.canonical_id);
-
-      const edgeStep: PathStep = {
-        edge: scored.relation.predicate,
-        direction: scored.actual_direction,
-        score: scored.score,
-      };
-
-      const entityStep: PathStep = {
-        entity: entity.canonical_id,
-        label: entity.label,
-        type: entity.type,
-      };
-
-      expanded.push({
-        current_entity: entity,
-        path: [...candidate.path, edgeStep, entityStep],
-        score: candidate.score * scored.score,
-        visited: newVisited,
-      });
-    }
+    expanded.push({
+      current_entity: entity,
+      path: [...candidate.path, edgeStep, entityStep],
+      score: candidate.score * scored.score,
+      visited: newVisited,
+    });
   }
 
   return expanded;

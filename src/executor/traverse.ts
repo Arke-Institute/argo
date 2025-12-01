@@ -30,18 +30,15 @@ export async function executeHop(
   k_explore: number,
   allowedPis?: string[]
 ): Promise<CandidatePath[]> {
-  const newCandidates: CandidatePath[] = [];
+  // Process all candidates in parallel
+  const hopResultsArrays = await Promise.all(
+    candidates.map((candidate) =>
+      executeHopForCandidate(candidate, hop, services, k_explore, allowedPis)
+    )
+  );
 
-  for (const candidate of candidates) {
-    const hopResults = await executeHopForCandidate(
-      candidate,
-      hop,
-      services,
-      k_explore,
-      allowedPis
-    );
-    newCandidates.push(...hopResults);
-  }
+  // Flatten results
+  const newCandidates = hopResultsArrays.flat();
 
   // Sort by score and limit beam width
   newCandidates.sort((a, b) => b.score - a.score);
