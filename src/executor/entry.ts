@@ -81,11 +81,19 @@ async function resolveSemanticSearch(
     filter,
   });
 
-  // Fetch full entities for all matches
+  if (matches.length === 0) {
+    return [];
+  }
+
+  // Fetch all entities in parallel
+  const matchIds = matches.map((m) => m.id);
+  const entities = await services.graphdb.getEntities(matchIds);
+
+  // Build candidates from fetched entities
   const candidates: CandidatePath[] = [];
 
   for (const match of matches) {
-    const entity = await services.graphdb.getEntity(match.id);
+    const entity = entities.get(match.id);
     if (!entity) continue;
 
     // Double-check entity belongs to allowed PIs (belt and suspenders)
