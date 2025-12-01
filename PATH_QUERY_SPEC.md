@@ -617,6 +617,177 @@ declaration → (SIGNED_BY) → washington → (AFFILIATED_WITH) → continental
 
 ---
 
+### Example 18: Finding PIs (Processing Instances)
+
+**Query**: "Find PIs related to historical collections"
+
+```
+"historical collection" type:pi
+```
+
+**Execution**:
+1. Semantic search "historical collection"
+2. Filter directly to type:pi
+
+**Use case**: Find data source collections by topic.
+
+---
+
+### Example 19: Navigating PI Hierarchy
+
+**Query**: "Find child PIs of a collection"
+
+```
+@arke:drexel_collection -[HAS_CHILD]-> type:pi
+```
+
+**Execution**:
+1. Start from known PI
+2. Follow HAS_CHILD relationships
+3. Filter to PI entities
+
+**Note**: PI hierarchy uses `HAS_CHILD` relationships. Use incoming `<-[HAS_CHILD]-` to find parent PIs.
+
+---
+
+### Example 20: Files Within a PI
+
+**Query**: "Find all files in a specific PI"
+
+```
+@arke:drexel_collection -[HAS_FILE]-> type:file
+```
+
+**Execution**:
+1. Start from PI
+2. Follow HAS_FILE relationships
+3. Return file entities
+
+**Alternative with semantic ranking**:
+```
+@arke:drexel_collection -[HAS_FILE]-> type:file ~ "correspondence letters"
+```
+
+---
+
+### Example 21: From File to Mentioned Entities
+
+**Query**: "What people and places are mentioned in this file?"
+
+```
+@arke:doc:letter_001 -[MENTIONS, REFERS_TO]-> type:person
+```
+
+```
+@arke:doc:letter_001 -[MENTIONS, REFERS_TO]-> type:place
+```
+
+**Use case**: Extract entities from a document.
+
+---
+
+### Example 22: PI with Enriched Metadata
+
+**Query**: "Get PI details with manifest info"
+
+**Request**:
+```json
+{
+  "path": "@arke:drexel_collection",
+  "enrich": true
+}
+```
+
+**Response** (partial):
+```json
+{
+  "results": [{
+    "entity": {
+      "canonical_id": "arke:drexel_collection",
+      "label": "Drexel Historical Collection",
+      "type": "pi",
+      "content": {
+        "pinx": "drexel",
+        "description": "Historical documents from Drexel University archives",
+        "manifest": {
+          "version": 1,
+          "children_count": 15
+        }
+      }
+    }
+  }]
+}
+```
+
+---
+
+### Example 23: Files with Structured Data
+
+**Query**: "Get reference files with parsed JSON"
+
+**Request**:
+```json
+{
+  "path": "\"metadata\" type:file ~ \"structured data\"",
+  "enrich": true
+}
+```
+
+**Response** (partial - for a file with content_type: ref_json):
+```json
+{
+  "results": [{
+    "entity": {
+      "canonical_id": "arke:ref:metadata_001",
+      "type": "file",
+      "content": {
+        "data": {
+          "author": "George Washington",
+          "date": "1776-07-04",
+          "recipients": ["John Adams", "Thomas Jefferson"]
+        },
+        "format": "json"
+      }
+    }
+  }]
+}
+```
+
+---
+
+### Example 24: Cross-PI Entity Search
+
+**Query**: "Find people mentioned across multiple collections"
+
+**Request**:
+```json
+{
+  "path": "\"Benjamin Franklin\" type:person",
+  "k": 10
+}
+```
+
+**Use case**: Without lineage filtering, searches across all PIs to find entity mentions in different collections.
+
+---
+
+### Example 25: File to PI Provenance
+
+**Query**: "What PI does this file belong to?"
+
+```
+@arke:doc:letter_001 <-[HAS_FILE]- type:pi
+```
+
+**Execution**:
+1. Start from file
+2. Follow incoming HAS_FILE edge
+3. Return the parent PI
+
+**Use case**: Trace provenance of a document back to its source collection.
+
+---
+
 ## Edge Cases
 
 ### Low Similarity Scores
