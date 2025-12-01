@@ -83,14 +83,18 @@ After an edge, you can filter what entities to include.
 | Syntax | Description | Example |
 |--------|-------------|---------|
 | `type:typename` | Filter by entity type | `type:person` |
+| `type:t1,t2,t3` | Filter by multiple types (OR) | `type:file,document` |
 | `type:typename ~ "text"` | Type filter + semantic ranking | `type:event ~ "military battle"` |
+| `type:t1,t2 ~ "text"` | Multi-type + semantic ranking | `type:file,document ~ "letter"` |
 | `@canonical_id` | Exact entity match | `@mount_vernon` |
 | `"text"` | Semantic filter on candidates | `"historical event"` |
 | (none) | No filter, accept all | `-[knows]->` at end of query |
 
-**Type filter** restricts results to entities of that type. Valid types: `person`, `place`, `organization`, `date`, `file`, `event`, `unknown`.
+**Type filter** restricts results to entities of that type. Valid types: `person`, `place`, `organization`, `date`, `file`, `event`, `pi`, `unknown`.
 
-**Combined type + semantic filter** first filters by type, then ranks within that type by semantic similarity. The `~` operator means "similar to". Example: `type:event ~ "military battle"` finds events that are semantically similar to "military battle".
+**Multi-type filter** allows matching any of several types using comma-separated values. Example: `type:file,document` matches both file and document entities. Useful when entity types overlap or when searching across related types.
+
+**Combined type + semantic filter** first filters by type(s), then ranks within that set by semantic similarity. The `~` operator means "similar to". Example: `type:event ~ "military battle"` finds events that are semantically similar to "military battle".
 
 **Semantic filter** (quoted text at a non-entry position) ranks the candidate entities by semantic similarity to the text. This is different from entry-point search: it searches *within* the candidates found by traversal, not the whole index.
 
@@ -139,7 +143,8 @@ min_max         := integer? "," integer?
 exact           := integer
 filter          := combined_filter | type_filter | exact_entity | semantic_search | ε
 combined_filter := type_filter "~" semantic_search
-type_filter     := "type:" typename
+type_filter     := "type:" typename_list
+typename_list   := typename ("," typename)*
 typename        := "person" | "place" | "organization" | "date" | "file" | "event" | "pi" | "unknown"
 exact_entity    := "@" canonical_id
 semantic_search := '"' text '"'

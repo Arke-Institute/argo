@@ -160,7 +160,9 @@ Content-Type: application/json
 | Syntax | Description | Example |
 |--------|-------------|---------|
 | `type:typename` | Filter by type | `type:person` |
+| `type:t1,t2,t3` | Filter by multiple types (OR) | `type:file,document` |
 | `type:typename ~ "text"` | Type + semantic ranking | `type:event ~ "military battle"` |
+| `type:t1,t2 ~ "text"` | Multi-type + semantic | `type:file,document ~ "letter"` |
 | `@id` | Exact entity match | `@mount_vernon` |
 | `"text"` | Semantic filter | `"historical event"` |
 
