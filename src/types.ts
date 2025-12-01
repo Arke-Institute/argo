@@ -39,6 +39,40 @@ export interface RelationshipSet {
 }
 
 // ============================================================================
+// Lineage Types
+// ============================================================================
+
+export interface LineageParams {
+  sourcePi: string;
+  direction: 'ancestors' | 'descendants' | 'both';
+}
+
+export interface LineagePiInfo {
+  id: string;
+  hops: number;
+  created_at: string;
+}
+
+export interface LineageDirectionResult {
+  pis: LineagePiInfo[];
+  count: number;
+  truncated: boolean;
+}
+
+export interface LineageResponse {
+  sourcePi: string;
+  ancestors?: LineageDirectionResult;
+  descendants?: LineageDirectionResult;
+}
+
+export interface LineageMetadata {
+  sourcePi: string;
+  direction: string;
+  piCount: number;
+  truncated: boolean;
+}
+
+// ============================================================================
 // Query Parameters & Results
 // ============================================================================
 
@@ -46,6 +80,7 @@ export interface QueryParams {
   path: string;
   k?: number;
   k_explore?: number;
+  lineage?: LineageParams;
 }
 
 export interface QueryResult {
@@ -79,6 +114,7 @@ export interface QueryMetadata {
   partial_path?: PathStep[];
   stopped_at_hop?: number;
   reason?: string;
+  lineage?: LineageMetadata;
 }
 
 // ============================================================================

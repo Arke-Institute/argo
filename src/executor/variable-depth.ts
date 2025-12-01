@@ -28,7 +28,8 @@ export async function executeVariableDepthHop(
   hop: Hop,
   services: Services,
   k: number,
-  k_explore: number
+  k_explore: number,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   const { min, max } = hop.depth_range!;
   const maxDepth = max === -1 ? DEFAULT_MAX_DEPTH : max;
@@ -49,7 +50,8 @@ export async function executeVariableDepthHop(
       hop.direction,
       hop.relation,
       services,
-      k_explore
+      k_explore,
+      allowedPis
     );
 
     totalCandidates += nextLevel.length;
@@ -98,7 +100,8 @@ async function expandOneLevel(
   direction: 'outgoing' | 'incoming' | 'bidirectional',
   relation: RelationMatch,
   services: Services,
-  k_explore: number
+  k_explore: number,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   const expanded: CandidatePath[] = [];
 
@@ -108,13 +111,25 @@ async function expandOneLevel(
       candidate.current_entity.canonical_id
     );
 
+    // Filter relationships by allowed PIs if specified
+    const filteredRelationships = allowedPis
+      ? {
+          outgoing: relationships.outgoing.filter((r) =>
+            allowedPis.includes(r.source_pi)
+          ),
+          incoming: relationships.incoming.filter((r) =>
+            allowedPis.includes(r.source_pi)
+          ),
+        }
+      : relationships;
+
     // Collect scored relations from relevant direction(s)
     let scoredRels: ScoredRelation[] = [];
 
     if (direction === 'outgoing' || direction === 'bidirectional') {
-      if (relationships.outgoing.length > 0) {
+      if (filteredRelationships.outgoing.length > 0) {
         const outScored = await scoreRelationsForExpansion(
-          relationships.outgoing,
+          filteredRelationships.outgoing,
           relation,
           'outgoing',
           services,
@@ -125,9 +140,9 @@ async function expandOneLevel(
     }
 
     if (direction === 'incoming' || direction === 'bidirectional') {
-      if (relationships.incoming.length > 0) {
+      if (filteredRelationships.incoming.length > 0) {
         const inScored = await scoreRelationsForExpansion(
-          relationships.incoming,
+          filteredRelationships.incoming,
           relation,
           'incoming',
           services,
@@ -159,9 +174,18 @@ async function expandOneLevel(
 
     const targetEntities = await services.graphdb.getEntities(uniqueTargetIds);
 
+    // Filter entities by allowed PIs if specified
+    const piFilteredEntities = allowedPis
+      ? new Map(
+          [...targetEntities].filter(([_, entity]) =>
+            entity.source_pis.some((pi) => allowedPis.includes(pi))
+          )
+        )
+      : targetEntities;
+
     // Build expanded candidates (no filter at this stage)
     for (const scored of scoredRels) {
-      const entity = targetEntities.get(scored.target_id);
+      const entity = piFilteredEntities.get(scored.target_id);
       if (!entity) continue;
       if (candidate.visited.has(entity.canonical_id)) continue;
 

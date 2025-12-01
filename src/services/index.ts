@@ -24,3 +24,4 @@ export function createServices(env: Env): Services {
 export { EmbeddingClient } from './embedding';
 export { GraphDBClient } from './graphdb';
 export { PineconeClient } from './pinecone';
+export { LineageClient } from './lineage';

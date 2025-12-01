@@ -4,8 +4,8 @@
  * link-search worker
  */
 
-import type { Env, QueryParams, QueryResult } from './types';
-import { createServices } from './services';
+import type { Env, QueryParams, QueryResult, LineageMetadata } from './types';
+import { createServices, LineageClient } from './services';
 import { parse, LexerError, ParseError } from './parser';
 import { execute } from './executor';
 
@@ -127,9 +127,39 @@ async function handleQuery(
     throw error;
   }
 
+  // Resolve lineage if provided
+  let allowedPis: string[] | undefined;
+  let lineageMetadata: LineageMetadata | undefined;
+
+  if (body.lineage) {
+    try {
+      const lineageClient = new LineageClient(env.GRAPHDB_GATEWAY);
+      const lineageResult = await lineageClient.getLineage(
+        body.lineage.sourcePi,
+        body.lineage.direction
+      );
+      allowedPis = lineageResult.pis;
+      lineageMetadata = {
+        sourcePi: body.lineage.sourcePi,
+        direction: body.lineage.direction,
+        piCount: lineageResult.pis.length,
+        truncated: lineageResult.truncated,
+      };
+    } catch (error) {
+      return json(
+        {
+          error: 'Lineage resolution failed',
+          message: String(error),
+        },
+        corsHeaders,
+        400
+      );
+    }
+  }
+
   // Execute the query
   const services = createServices(env);
-  const result = await execute(ast, services, body);
+  const result = await execute(ast, services, body, allowedPis, lineageMetadata);
 
   return json(result, corsHeaders);
 }

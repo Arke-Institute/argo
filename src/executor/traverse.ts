@@ -27,7 +27,8 @@ export async function executeHop(
   hop: Hop,
   services: Services,
   k: number,
-  k_explore: number
+  k_explore: number,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   const newCandidates: CandidatePath[] = [];
 
@@ -36,7 +37,8 @@ export async function executeHop(
       candidate,
       hop,
       services,
-      k_explore
+      k_explore,
+      allowedPis
     );
     newCandidates.push(...hopResults);
   }
@@ -53,20 +55,33 @@ async function executeHopForCandidate(
   candidate: CandidatePath,
   hop: Hop,
   services: Services,
-  k_explore: number
+  k_explore: number,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   // Get relationships for current entity
   const relationships = await services.graphdb.getRelationships(
     candidate.current_entity.canonical_id
   );
 
+  // Filter relationships by allowed PIs if specified
+  const filteredRelationships = allowedPis
+    ? {
+        outgoing: relationships.outgoing.filter((r) =>
+          allowedPis.includes(r.source_pi)
+        ),
+        incoming: relationships.incoming.filter((r) =>
+          allowedPis.includes(r.source_pi)
+        ),
+      }
+    : relationships;
+
   // Collect scored relations from relevant direction(s)
   let scoredRelations: ScoredRelation[] = [];
 
   if (hop.direction === 'outgoing' || hop.direction === 'bidirectional') {
-    if (relationships.outgoing.length > 0) {
+    if (filteredRelationships.outgoing.length > 0) {
       const outScored = await scoreRelations(
-        relationships.outgoing,
+        filteredRelationships.outgoing,
         hop.relation,
         'outgoing',
         services,
@@ -77,9 +92,9 @@ async function executeHopForCandidate(
   }
 
   if (hop.direction === 'incoming' || hop.direction === 'bidirectional') {
-    if (relationships.incoming.length > 0) {
+    if (filteredRelationships.incoming.length > 0) {
       const inScored = await scoreRelations(
-        relationships.incoming,
+        filteredRelationships.incoming,
         hop.relation,
         'incoming',
         services,
@@ -115,9 +130,18 @@ async function executeHopForCandidate(
 
   const targetEntities = await services.graphdb.getEntities(uniqueTargetIds);
 
-  // Apply filter
+  // Filter entities by allowed PIs if specified
+  const piFilteredEntities = allowedPis
+    ? new Map(
+        [...targetEntities].filter(([_, entity]) =>
+          entity.source_pis.some((pi) => allowedPis.includes(pi))
+        )
+      )
+    : targetEntities;
+
+  // Apply hop filter
   const filteredEntities = await applyFilter(
-    Array.from(targetEntities.values()),
+    Array.from(piFilteredEntities.values()),
     hop.filter,
     services,
     k_explore

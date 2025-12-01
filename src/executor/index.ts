@@ -9,6 +9,7 @@ import type {
   PathResult,
   QueryMetadata,
   CandidatePath,
+  LineageMetadata,
 } from '../types';
 import type { PathAST } from '../parser/types';
 import { resolveEntry, applyEntryFilter } from './entry';
@@ -24,7 +25,9 @@ const DEFAULT_K_EXPLORE_MULTIPLIER = 3;
 export async function execute(
   ast: PathAST,
   services: Services,
-  params: Partial<QueryParams>
+  params: Partial<QueryParams>,
+  allowedPis?: string[],
+  lineageMetadata?: LineageMetadata
 ): Promise<QueryResult> {
   const startTime = Date.now();
 
@@ -34,7 +37,7 @@ export async function execute(
   let candidatesExplored = 0;
 
   // Resolve entry point
-  let candidates = await resolveEntry(ast.entry, services, k_explore);
+  let candidates = await resolveEntry(ast.entry, services, k_explore, allowedPis);
   candidatesExplored += candidates.length;
 
   if (candidates.length === 0) {
@@ -46,13 +49,14 @@ export async function execute(
       startTime,
       candidatesExplored,
       'no_entry_point',
-      `No matching entities found for entry point`
+      `No matching entities found for entry point`,
+      lineageMetadata
     );
   }
 
   // Apply entry filter if present (zero-hop query support)
   if (ast.entry_filter) {
-    candidates = await applyEntryFilter(candidates, ast.entry_filter, services);
+    candidates = await applyEntryFilter(candidates, ast.entry_filter, services, allowedPis);
     candidatesExplored += candidates.length;
 
     // If this is a zero-hop query (no hops), return results now
@@ -67,6 +71,7 @@ export async function execute(
           k_explore,
           total_candidates_explored: candidatesExplored,
           execution_time_ms: Date.now() - startTime,
+          lineage: lineageMetadata,
         },
       };
     }
@@ -86,12 +91,13 @@ export async function execute(
         hop,
         services,
         k,
-        k_explore
+        k_explore,
+        allowedPis
       );
       candidatesExplored += candidates.length;
     } else {
       // Regular single hop
-      candidates = await executeHop(candidates, hop, services, k, k_explore);
+      candidates = await executeHop(candidates, hop, services, k, k_explore, allowedPis);
       candidatesExplored += candidates.length;
     }
 
@@ -105,7 +111,8 @@ export async function execute(
         startTime,
         candidatesExplored,
         previousCandidates,
-        i + 1
+        i + 1,
+        lineageMetadata
       );
     }
   }
@@ -122,6 +129,7 @@ export async function execute(
       k_explore,
       total_candidates_explored: candidatesExplored,
       execution_time_ms: Date.now() - startTime,
+      lineage: lineageMetadata,
     },
   };
 }
@@ -155,7 +163,8 @@ function buildErrorResult(
   startTime: number,
   candidatesExplored: number,
   error: string,
-  message: string
+  message: string,
+  lineageMetadata?: LineageMetadata
 ): QueryResult {
   return {
     results: [],
@@ -168,6 +177,7 @@ function buildErrorResult(
       execution_time_ms: Date.now() - startTime,
       error,
       reason: message,
+      lineage: lineageMetadata,
     },
   };
 }
@@ -183,7 +193,8 @@ function buildPartialResult(
   startTime: number,
   candidatesExplored: number,
   lastCandidates: CandidatePath[],
-  stoppedAt: number
+  stoppedAt: number,
+  lineageMetadata?: LineageMetadata
 ): QueryResult {
   // Include the partial path from the best candidate
   const bestCandidate = lastCandidates.sort((a, b) => b.score - a.score)[0];
@@ -201,6 +212,7 @@ function buildPartialResult(
       reason: `Traversal stopped at hop ${stoppedAt} - no matching relations or entities`,
       stopped_at_hop: stoppedAt,
       partial_path: bestCandidate?.path,
+      lineage: lineageMetadata,
     },
   };
 }

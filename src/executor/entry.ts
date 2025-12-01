@@ -13,13 +13,14 @@ import type { EntryPoint, Filter } from '../parser/types';
 export async function resolveEntry(
   entry: EntryPoint,
   services: Services,
-  k_explore: number
+  k_explore: number,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   if (entry.type === 'exact_id') {
-    return resolveExactId(entry.id, services);
+    return resolveExactId(entry.id, services, allowedPis);
   }
 
-  return resolveSemanticSearch(entry.text, services, k_explore);
+  return resolveSemanticSearch(entry.text, services, k_explore, allowedPis);
 }
 
 /**
@@ -27,11 +28,17 @@ export async function resolveEntry(
  */
 async function resolveExactId(
   id: string,
-  services: Services
+  services: Services,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   const entity = await services.graphdb.getEntity(id);
 
   if (!entity) {
+    return [];
+  }
+
+  // Filter by allowed PIs if specified
+  if (allowedPis && !entity.source_pis.some((pi) => allowedPis.includes(pi))) {
     return [];
   }
 
@@ -57,13 +64,22 @@ async function resolveExactId(
 async function resolveSemanticSearch(
   text: string,
   services: Services,
-  k_explore: number
+  k_explore: number,
+  allowedPis?: string[]
 ): Promise<CandidatePath[]> {
   // Embed the search text
   const embedding = await services.embedding.embedOne(text);
 
+  // Build Pinecone filter with PI constraint if specified
+  const filter = allowedPis
+    ? { source_pi: { $in: allowedPis } }
+    : undefined;
+
   // Query Pinecone for top k_explore matches
-  const matches = await services.pinecone.query(embedding, { top_k: k_explore });
+  const matches = await services.pinecone.query(embedding, {
+    top_k: k_explore,
+    filter,
+  });
 
   // Fetch full entities for all matches
   const candidates: CandidatePath[] = [];
@@ -71,6 +87,11 @@ async function resolveSemanticSearch(
   for (const match of matches) {
     const entity = await services.graphdb.getEntity(match.id);
     if (!entity) continue;
+
+    // Double-check entity belongs to allowed PIs (belt and suspenders)
+    if (allowedPis && !entity.source_pis.some((pi) => allowedPis.includes(pi))) {
+      continue;
+    }
 
     candidates.push({
       current_entity: entity,
@@ -97,8 +118,11 @@ async function resolveSemanticSearch(
 export async function applyEntryFilter(
   candidates: CandidatePath[],
   filter: Filter,
-  services: Services
+  services: Services,
+  _allowedPis?: string[]
 ): Promise<CandidatePath[]> {
+  // Note: allowedPis filtering already applied during entry resolution
+  // Kept in signature for consistency with other functions
   switch (filter.type) {
     case 'type_filter':
       // Filter by entity type
