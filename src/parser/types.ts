@@ -61,7 +61,7 @@ export type RelationMatch =
   | { type: 'fuzzy'; terms: string[] };
 
 export type Filter =
-  | { type: 'type_filter'; value: string }
+  | { type: 'type_filter'; values: string[] }
   | { type: 'exact_id'; id: string }
   | { type: 'semantic_search'; text: string }
-  | { type: 'combined_filter'; type_value: string; semantic_text: string };
+  | { type: 'combined_filter'; type_values: string[]; semantic_text: string };

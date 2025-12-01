@@ -90,14 +90,33 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
-    // type:value
+    // type:value or type:value1,value2,value3 (multi-type)
     if (ch === 't' && input.slice(pos, pos + 5) === 'type:') {
       advance(5);
-      const value = readTerm();
-      if (!value) {
+      const values: string[] = [];
+      const firstValue = readTerm();
+      if (!firstValue) {
         throw new LexerError('Expected type name after type:', pos);
       }
-      tokens.push({ type: 'TYPE_FILTER', value, position: startPos });
+      values.push(firstValue);
+
+      // Read additional comma-separated types
+      while (peek() === ',') {
+        // Look ahead to see if this is a type or something else (like relation terms)
+        // Only consume if followed by a valid type name
+        const nextChar = peek(1);
+        if (!/[a-zA-Z_]/.test(nextChar)) {
+          break; // Not a type name, stop here
+        }
+        advance(); // consume comma
+        const nextValue = readTerm();
+        if (!nextValue) {
+          throw new LexerError('Expected type name after comma in type filter', pos);
+        }
+        values.push(nextValue);
+      }
+
+      tokens.push({ type: 'TYPE_FILTER', value: values.join(','), position: startPos });
       continue;
     }
 

@@ -320,9 +320,11 @@ async function applyFilterAndCollect(
     return candidates;
   }
 
-  // Type filter
+  // Type filter (supports multiple types)
   if (filter.type === 'type_filter') {
-    return candidates.filter((c) => c.current_entity.type === filter.value);
+    return candidates.filter((c) =>
+      filter.values.includes(c.current_entity.type)
+    );
   }
 
   // Exact ID filter
@@ -359,8 +361,8 @@ async function applyFilterAndCollect(
 
   // Combined filter - type first, then semantic
   if (filter.type === 'combined_filter') {
-    const typeFiltered = candidates.filter(
-      (c) => c.current_entity.type === filter.type_value
+    const typeFiltered = candidates.filter((c) =>
+      filter.type_values.includes(c.current_entity.type)
     );
 
     if (typeFiltered.length === 0) {

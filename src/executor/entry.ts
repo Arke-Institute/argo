@@ -133,9 +133,9 @@ export async function applyEntryFilter(
   // Kept in signature for consistency with other functions
   switch (filter.type) {
     case 'type_filter':
-      // Filter by entity type
-      return candidates.filter(
-        (c) => c.current_entity.type === filter.value
+      // Filter by entity type (supports multiple types)
+      return candidates.filter((c) =>
+        filter.values.includes(c.current_entity.type)
       );
 
     case 'exact_id':
@@ -150,8 +150,8 @@ export async function applyEntryFilter(
 
     case 'combined_filter':
       // Filter by type first, then re-rank semantically
-      const typeFiltered = candidates.filter(
-        (c) => c.current_entity.type === filter.type_value
+      const typeFiltered = candidates.filter((c) =>
+        filter.type_values.includes(c.current_entity.type)
       );
       return reRankBySemantic(typeFiltered, filter.semantic_text, services);
 

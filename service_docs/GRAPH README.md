@@ -15,14 +15,14 @@ Worker Name: graphdb-gateway
 
 ## Features
 
-- 🚀 **Edge-deployed** - Runs on Cloudflare's global network (300+ cities)
-- 🔒 **Secure** - TLS encryption, credential management via Cloudflare Secrets
-- ⚡ **Fast** - 26ms cold start, connection pooling, database indexes
-- 📊 **Graph Operations** - PI hierarchy, entity management, relationship creation
-- 🔍 **Hierarchy Queries** - Parent/child entity traversal with caching support
-- 🔄 **Smart Merging** - 4 merge strategies including conflict resolution
-- 🎯 **Type-safe** - Full TypeScript implementation with modular architecture
-- 🧪 **Well-tested** - Complete test suite with sample data
+- **Edge-deployed** - Runs on Cloudflare's global network (300+ cities)
+- **Secure** - TLS encryption, credential management via Cloudflare Secrets
+- **Fast** - 26ms cold start, connection pooling, database indexes
+- **Graph Operations** - PI hierarchy, entity management, relationship creation
+- **Hierarchy Queries** - Parent/child entity traversal with caching support
+- **Atomic Merging** - APOC-based entity absorption with full relationship transfer
+- **Type-safe** - Full TypeScript implementation with modular architecture
+- **Well-tested** - Complete test suite with sample data
 
 ## Quick Start
 
@@ -85,42 +85,59 @@ Content-Type: application/json
 // All requests with same canonical_id succeed (no 409)
 ```
 
-#### Merge Entity (Enhanced with Strategies)
+#### Atomic Merge (Absorb Entity)
 ```http
 POST /entity/merge
 Content-Type: application/json
 
 {
-  "canonical_id": "uuid_123",
-  "enrichment_data": {
-    "type": "person",              // Optional: upgrade placeholder type
-    "label": "Updated Label",      // Optional: refine label
-    "new_properties": {"role": "researcher"},
-    "merge_strategy": "merge_peers"  // enrich_placeholder | merge_peers | link_only | prefer_new
-  },
-  "source_pi": "01KA1H5VGR..."
+  "source_id": "uuid-of-entity-to-delete",
+  "target_id": "uuid-of-entity-to-keep"
 }
 
-// Response includes conflicts for merge_peers strategy
+// Response (success)
 {
-  "canonical_id": "uuid_123",
-  "updated": true,
-  "conflicts": [
-    {
-      "property": "role",
-      "existing_value": "president",
-      "new_value": "general",
-      "resolution": "accumulated"  // Now: ["president", "general"]
-    }
-  ]
+  "success": true,
+  "target_id": "uuid-of-entity-to-keep",
+  "merged": {
+    "properties_transferred": 5,
+    "relationships_transferred": 12,
+    "source_pis_added": ["pi1", "pi2"]
+  }
+}
+
+// Response (target not found - 404)
+{
+  "success": false,
+  "error": "target_not_found",
+  "message": "Target entity does not exist"
+}
+
+// Response (source not found - 404)
+{
+  "success": false,
+  "error": "source_not_found",
+  "message": "Source entity does not exist (may have been merged already)"
 }
 ```
 
-**Merge Strategies:**
-- `enrich_placeholder`: Upgrade placeholder (type="unknown") to rich entity
-- `merge_peers`: Merge two rich entities with conflict resolution (accumulates into arrays)
-- `link_only`: Just add source PI relationship, no data changes
-- `prefer_new`: Overwrite existing data with new data
+**Atomic Merge Behavior:**
+- Absorbs source entity INTO target entity
+- Transfers ALL relationships from source to target
+- Merges properties (target wins on conflicts)
+- Deletes source entity after transfer
+- Uses APOC `refactor.mergeNodes` for atomicity
+- Single Neo4j transaction - completes fully or rolls back
+
+#### Check Entity Exists
+```http
+GET /entity/exists/:canonical_id
+
+// Response
+{
+  "exists": true
+}
+```
 
 #### Get Entity by ID
 ```http
@@ -159,68 +176,6 @@ DELETE /entity/:canonical_id
 }
 ```
 
-#### Lookup Entity by Code
-```http
-POST /entity/lookup/code
-Content-Type: application/json
-
-{
-  "code": "nick_chimicles"
-}
-
-// Response (found)
-{
-  "found": true,
-  "entity": {
-    "canonical_id": "...",
-    "code": "nick_chimicles",
-    "label": "Nick Chimicles",
-    "type": "person",
-    "properties": {...},
-    "created_by_pi": "...",
-    "source_pis": ["pi1", "pi2"]
-  }
-}
-
-// Response (not found)
-{
-  "found": false
-}
-```
-
-#### Lookup Entities by Label and Type
-```http
-POST /entity/lookup/label
-Content-Type: application/json
-
-{
-  "label": "Nick Chimicles",
-  "type": "person"
-}
-
-// Response (can return multiple matches)
-{
-  "found": true,
-  "entities": [
-    {
-      "canonical_id": "...",
-      "code": "nick_chimicles",
-      "label": "Nick Chimicles",
-      "type": "person",
-      "properties": {...},
-      "created_by_pi": "...",
-      "source_pis": ["pi1", "pi2"]
-    }
-  ]
-}
-
-// Response (not found)
-{
-  "found": false,
-  "entities": []
-}
-```
-
 #### Query Entity (with Relationships)
 ```http
 POST /entity/query
@@ -244,58 +199,141 @@ Content-Type: application/json
 }
 ```
 
-### Hierarchy Operations
-
-#### Find Entity in Hierarchy
+#### Lookup Entities by Code
 ```http
-POST /entity/find-in-hierarchy
+POST /entities/lookup-by-code
 Content-Type: application/json
 
 {
-  "pi": "01KA1H53CP...",
-  "code": "george_washington",
-  "search_scope": "both",          // parents | children | both
-  "include_placeholder": true      // Optional: include type="unknown"
+  "code": "concert_a",
+  "type": "unknown",        // Optional: only return this type
+  "excludeType": "unknown"  // Optional: exclude this type
 }
 
 // Response
+{
+  "entities": [
+    {
+      "canonical_id": "uuid_123",
+      "code": "concert_a",
+      "label": "Concert A",
+      "type": "event",
+      "properties": {...},
+      "created_by_pi": "...",
+      "source_pis": [...]
+    }
+  ],
+  "count": 1
+}
+```
+
+### Lineage Operations
+
+#### Get PI Lineage
+```http
+POST /pi/lineage
+Content-Type: application/json
+
+{
+  "sourcePi": "01KA1H53CP...",
+  "direction": "both",
+  "maxHops": 50
+}
+
+// Response
+{
+  "sourcePi": "01KA1H53CP...",
+  "ancestors": {
+    "pis": [
+      { "id": "01KA1H51YC...", "hops": 1, "created_at": "2025-..." },
+      { "id": "01KA1H4KMP...", "hops": 2, "created_at": "2025-..." }
+    ],
+    "count": 2,
+    "truncated": false
+  },
+  "descendants": {
+    "pis": [
+      { "id": "01KA1H5VGR...", "hops": 1, "created_at": "2025-..." }
+    ],
+    "count": 1,
+    "truncated": false
+  }
+}
+```
+
+**Parameters:**
+- `direction`: `ancestors`, `descendants`, or `both`
+- `maxHops`: Maximum traversal depth per direction
+- `truncated: true` indicates more PIs exist beyond the limit
+
+#### Find Entity in Lineage
+```http
+POST /entities/find-in-lineage
+Content-Type: application/json
+
+{
+  "sourcePi": "01KA1H53CP...",
+  "candidateIds": ["uuid1", "uuid2", "uuid3"],
+  "maxHops": 10
+}
+
+// Response (found in direct lineage)
 {
   "found": true,
   "entity": {
     "canonical_id": "uuid_123",
-    "code": "george_washington",
-    "label": "George Washington",
-    "type": "person",
-    "properties": {"role": "president"},
-    "source_pis": ["01KA1H63MP..."],
-    "is_placeholder": false
+    "code": "concert_a",
+    "label": "Concert A",
+    "type": "event",
+    "properties": {...},
+    "created_by_pi": "..."
   },
-  "found_in": "parent"  // parent | child
+  "hops": 2,
+  "direction": "ancestor"  // ancestor | descendant | same
+}
+
+// Response (not in lineage)
+{
+  "found": false
 }
 ```
 
-#### Get Entities from Hierarchy (Bulk)
-```http
-POST /entities/hierarchy
-Content-Type: application/json
-
-{
-  "pi": "01KA1H53CP...",
-  "direction": "both",              // ancestors | descendants | both
-  "exclude_type": ["file"],         // Optional: exclude types
-  "include_placeholders": true      // Optional: include type="unknown"
-}
-
-// Response
-{
-  "entities": [...],
-  "total_count": 45,
-  "from_parents": 20,
-  "from_children": 25
-}
-```
+**Notes:**
+- **Direct lineage only**: Only matches ancestors (up) or descendants (down)
+- **No cousin matching**: Entities in sibling branches are NOT matched
+- Used for placeholder resolution within the same document branch
 
 ### Relationship Operations
+
+#### Get Entity Relationships
+```http
+GET /relationships/:canonical_id
+
+// Response (found)
+{
+  "found": true,
+  "canonical_id": "uuid_123",
+  "relationships": [
+    {
+      "direction": "outgoing",
+      "predicate": "affiliated_with",
+      "target_id": "uuid_456",
+      "target_code": "org_123",
+      "target_label": "Organization Name",
+      "target_type": "organization",
+      "properties": {"since": "2020"},
+      "source_pi": "01KA1H53CP...",
+      "created_at": "2025-11-19T22:00:00Z"
+    }
+  ],
+  "total_count": 2
+}
+
+// Response (not found)
+{
+  "found": false
+}
+```
 
 #### Create Relationships
 ```http
@@ -351,26 +389,6 @@ Content-Type: application/json
 // Subsequent calls: Updates properties, prevents duplicates
 ```
 
-#### List All Relationships
-```http
-GET /relationships
-
-// Response
-{
-  "relationships": [
-    {
-      "subject_id": "uuid_123",
-      "predicate": "affiliated_with",
-      "object_id": "uuid_456",
-      "properties": {"since": "2020"},
-      "source_pi": "01KA1H53CP...",
-      "created_at": "2025-11-19T22:00:00Z"
-    }
-  ],
-  "total_count": 32
-}
-```
-
 ### Admin Operations
 
 #### Custom Query
@@ -394,9 +412,13 @@ Content-Type: application/json
 }
 ```
 
-#### Clear All Data
+**Safeguard:** Mass delete patterns are blocked to prevent accidental data loss:
+- `MATCH (n) DETACH DELETE n` ❌ Blocked
+- `MATCH (n:Entity {id: 'foo'}) DELETE n` ✓ Allowed (filtered)
+
+#### Clear Test Data
 ```http
-POST /admin/clear
+POST /admin/clear-test-data
 Content-Type: application/json
 
 {}
@@ -404,14 +426,16 @@ Content-Type: application/json
 // Response
 {
   "success": true,
-  "message": "All data cleared successfully",
+  "message": "Test data cleared successfully",
   "data": {
-    "deleted_nodes": 37,
-    "deleted_relationships": 70,
-    "cleared": true
+    "deleted_nodes": 16,
+    "deleted_relationships": 12,
+    "pattern": "nodes with \"test\" in id or canonical_id"
   }
 }
 ```
+
+**Safety:** Only deletes nodes where `id` or `canonical_id` contains "test". Safe to run in production - will not affect real data. Tests should use `test-` prefix in IDs.
 
 ## Architecture
 
@@ -426,18 +450,18 @@ Neo4j AuraDB (graph database)
 ### Division of Responsibilities
 
 **Orchestrator** (external service calling this API):
-- ✅ Decides whether to merge, create, or enrich entities
-- ✅ Semantic similarity scoring (via Pinecone)
-- ✅ Resolves ALL entity references from properties
-- ✅ Generates canonical IDs (UUIDs)
-- ✅ Workflow orchestration
+- Decides whether to merge or create entities
+- Semantic similarity scoring (via Pinecone)
+- Resolves ALL entity references from properties
+- Generates canonical IDs (UUIDs)
+- Workflow orchestration
 
 **GraphDB Gateway** (this service):
-- ✅ Simple storage and retrieval of entities
-- ✅ Execute property merging with conflict resolution
-- ✅ Track source PIs via EXTRACTED_FROM relationships
-- ✅ Query parent/child entity hierarchies
-- ✅ Database constraints and validation
+- Simple storage and retrieval of entities
+- Atomic entity merging (absorb source into target)
+- Track source PIs via EXTRACTED_FROM relationships
+- Query parent/child entity hierarchies
+- Database constraints and validation
 
 **Key Principle**: The orchestrator handles all decision-making logic; the Graph API is a data layer.
 
@@ -472,8 +496,8 @@ graphdb-gateway/
 │   ├── neo4j.ts              # Neo4j connection module
 │   ├── handlers/             # Domain-specific handlers
 │   │   ├── pi.ts            # PI operations
-│   │   ├── entity.ts        # Entity CRUD operations
-│   │   ├── hierarchy.ts     # Hierarchy traversal
+│   │   ├── entity.ts        # Entity CRUD + atomic merge
+│   │   ├── hierarchy.ts     # Lineage operations
 │   │   ├── relationship.ts  # Relationship operations
 │   │   └── admin.ts         # Admin operations (query, clear)
 │   ├── types/                # TypeScript type definitions
@@ -481,7 +505,7 @@ graphdb-gateway/
 │   │   ├── common.ts        # Shared types
 │   │   ├── pi.ts            # PI types
 │   │   ├── entity.ts        # Entity types
-│   │   ├── hierarchy.ts     # Hierarchy types
+│   │   ├── hierarchy.ts     # Lineage types
 │   │   └── relationship.ts  # Relationship types
 │   └── utils/                # Shared utilities
 │       ├── response.ts      # Response helpers
@@ -490,7 +514,6 @@ graphdb-gateway/
 │   ├── test-neo4j.js           # Neo4j connectivity tests
 │   ├── test-endpoints.sh       # Local API tests
 │   ├── test-production.sh      # Production API tests
-│   ├── test-concurrent-race.js # Concurrent race condition tests
 │   └── explore-data.js         # Database exploration
 ├── scripts/
 │   ├── populate-sample-data.js  # Sample data generator
@@ -541,7 +564,6 @@ npm run logs             # View production logs
 npm test                 # Test Neo4j connectivity
 npm run test:endpoints   # Test API endpoints (local)
 npm run test:production  # Test production deployment
-npm run test:race        # Test concurrent race conditions
 
 # Database utilities
 npm run populate         # Add sample data to Neo4j
@@ -572,9 +594,6 @@ npm run test:endpoints
 
 # Test production deployment
 npm run test:production
-
-# Test concurrent operations for race conditions
-npm run test:race
 ```
 
 ## Deployment
@@ -622,16 +641,17 @@ These indexes significantly improve:
 
 ## Security
 
-- ✅ TLS/HTTPS encryption
-- ✅ Secrets stored in Cloudflare (not in code)
-- ✅ Secure Neo4j connection (neo4j+s://)
-- ⚠️ CORS currently set to `*` (configure for production)
-- ⚠️ No authentication layer (add for production)
+- TLS/HTTPS encryption
+- Secrets stored in Cloudflare (not in code)
+- Secure Neo4j connection (neo4j+s://)
+- CORS currently set to `*` (configure for production)
+- No authentication layer (add for production)
 
 ## Documentation
 
 - **[Setup Guide](docs/SETUP.md)** - Complete setup and configuration
 - **[Quick Start](docs/QUICK_START.md)** - Quick reference and examples
+- **[Testing Guide](docs/TESTING.md)** - Test data conventions and cleanup
 - **[Deployment](docs/DEPLOYMENT.md)** - Production deployment details
 - **[Neo4j Docs](docs/neo4j_documentation.md)** - Neo4j driver documentation
 
@@ -650,4 +670,4 @@ ISC
 **Production URL:** https://graphdb-gateway.arke.institute
 **Neo4j Browser:** https://workspace-preview.neo4j.io/
 
-Built with ❤️ by Arke Institute
+Built with Arke Institute

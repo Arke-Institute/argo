@@ -257,7 +257,7 @@ async function applyFilter(
 
   if (filter.type === 'type_filter') {
     return entities
-      .filter((e) => e.type === filter.value)
+      .filter((e) => filter.values.includes(e.type))
       .map((e) => ({ entity: e }));
   }
 
@@ -289,8 +289,10 @@ async function applyFilter(
   }
 
   if (filter.type === 'combined_filter') {
-    // Step 1: Apply type filter
-    const typeFiltered = entities.filter((e) => e.type === filter.type_value);
+    // Step 1: Apply type filter (supports multiple types)
+    const typeFiltered = entities.filter((e) =>
+      filter.type_values.includes(e.type)
+    );
 
     if (typeFiltered.length === 0) {
       return [];

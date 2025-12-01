@@ -260,9 +260,10 @@ export class Parser {
     const token = this.current();
 
     // Type filter (possibly combined with semantic)
+    // Supports single type (type:person) or multi-type (type:file,document)
     if (token.type === 'TYPE_FILTER') {
       this.advance();
-      const typeValue = token.value;
+      const typeValues = token.value.split(',');
 
       // Check for ~ followed by quoted string (combined filter)
       if (this.current().type === 'TILDE') {
@@ -277,12 +278,12 @@ export class Parser {
         this.advance();
         return {
           type: 'combined_filter',
-          type_value: typeValue,
+          type_values: typeValues,
           semantic_text: semanticToken.value,
         };
       }
 
-      return { type: 'type_filter', value: typeValue };
+      return { type: 'type_filter', values: typeValues };
     }
 
     // Exact ID
