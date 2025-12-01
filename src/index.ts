@@ -8,6 +8,7 @@ import type { Env, QueryParams, QueryResult, LineageMetadata } from './types';
 import { createServices, LineageClient } from './services';
 import { parse, LexerError, ParseError } from './parser';
 import { execute } from './executor';
+import { enrichResults } from './executor/enrich';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -160,6 +161,12 @@ async function handleQuery(
   // Execute the query
   const services = createServices(env);
   const result = await execute(ast, services, body, allowedPis, lineageMetadata);
+
+  // Enrich results if requested
+  if (body.enrich && result.results.length > 0) {
+    const enrichLimit = body.enrich_limit ?? 2000;
+    result.results = await enrichResults(result.results, services, enrichLimit);
+  }
 
   return json(result, corsHeaders);
 }

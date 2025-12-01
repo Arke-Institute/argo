@@ -23,6 +23,36 @@ export interface Entity {
   type: string;
   properties: Record<string, unknown>;
   source_pis: string[];
+  content?: EnrichedContent;
+}
+
+// ============================================================================
+// Enrichment Types
+// ============================================================================
+
+export interface EnrichedContent {
+  // For files with content_type: text
+  text?: string;
+
+  // For files with ref_* types - parsed JSON blob
+  data?: Record<string, unknown>;
+
+  // Fallback if JSON parsing fails
+  raw?: string;
+
+  // For PIs - fetched from manifest components
+  pinx?: string | null;
+  description?: string | null;
+  manifest?: {
+    version?: number;
+    children_count?: number;
+  };
+
+  // Metadata
+  format?: 'text' | 'json' | 'raw';
+  truncated?: boolean;
+  parse_error?: boolean;
+  fetch_error?: string;
 }
 
 export interface Relationship {
@@ -81,6 +111,8 @@ export interface QueryParams {
   k?: number;
   k_explore?: number;
   lineage?: LineageParams;
+  enrich?: boolean;
+  enrich_limit?: number;
 }
 
 export interface QueryResult {
