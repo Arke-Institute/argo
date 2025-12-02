@@ -20,6 +20,20 @@ export async function resolveEntry(
     return resolveExactId(entry.id, services, allowedPis);
   }
 
+  if (entry.type === 'type_filter') {
+    return resolveTypeFilter(entry.type_values, services, k_explore, allowedPis);
+  }
+
+  if (entry.type === 'type_filter_semantic') {
+    return resolveTypeFilterSemantic(
+      entry.type_values,
+      entry.text,
+      services,
+      k_explore,
+      allowedPis
+    );
+  }
+
   return resolveSemanticSearch(entry.text, services, k_explore, allowedPis);
 }
 
@@ -100,6 +114,148 @@ async function resolveSemanticSearch(
     if (allowedPis && !entity.source_pis.some((pi) => allowedPis.includes(pi))) {
       continue;
     }
+
+    candidates.push({
+      current_entity: entity,
+      path: [
+        {
+          entity: entity.canonical_id,
+          label: entity.label,
+          type: entity.type,
+          score: match.score,
+        },
+      ],
+      score: match.score,
+      visited: new Set([entity.canonical_id]),
+    });
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolve by type filter only (no semantic text)
+ * This is less efficient - we need a random vector for Pinecone query
+ */
+async function resolveTypeFilter(
+  typeValues: string[],
+  services: Services,
+  k_explore: number,
+  allowedPis?: string[]
+): Promise<CandidatePath[]> {
+  // Build Pinecone filter for type(s) and optionally PI constraint
+  const conditions: Record<string, unknown>[] = [];
+
+  if (typeValues.length === 1) {
+    conditions.push({ type: { $eq: typeValues[0] } });
+  } else {
+    conditions.push({ type: { $in: typeValues } });
+  }
+
+  if (allowedPis) {
+    conditions.push({ source_pi: { $in: allowedPis } });
+  }
+
+  const filter =
+    conditions.length === 1 ? conditions[0] : { $and: conditions };
+
+  // We need a vector for Pinecone query - use a zero vector
+  // This will return random-ish results within the type filter
+  // All scores will be similar since we're not doing semantic ranking
+  const zeroVector = new Array(768).fill(0);
+
+  const matches = await services.pinecone.query(zeroVector, {
+    top_k: k_explore,
+    filter,
+  });
+
+  if (matches.length === 0) {
+    return [];
+  }
+
+  // Fetch all entities in parallel
+  const matchIds = matches.map((m) => m.id);
+  const entities = await services.graphdb.getEntities(matchIds);
+
+  // Build candidates - use uniform score since no semantic ranking
+  const candidates: CandidatePath[] = [];
+
+  for (const match of matches) {
+    const entity = entities.get(match.id);
+    if (!entity) continue;
+
+    // Verify type matches (belt and suspenders)
+    if (!typeValues.includes(entity.type)) continue;
+
+    candidates.push({
+      current_entity: entity,
+      path: [
+        {
+          entity: entity.canonical_id,
+          label: entity.label,
+          type: entity.type,
+        },
+      ],
+      score: 1.0, // Uniform score - no semantic ranking
+      visited: new Set([entity.canonical_id]),
+    });
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolve by type filter with semantic search within that type
+ */
+async function resolveTypeFilterSemantic(
+  typeValues: string[],
+  text: string,
+  services: Services,
+  k_explore: number,
+  allowedPis?: string[]
+): Promise<CandidatePath[]> {
+  // Embed the search text
+  const embedding = await services.embedding.embedOne(text);
+
+  // Build Pinecone filter for type(s) and optionally PI constraint
+  const conditions: Record<string, unknown>[] = [];
+
+  if (typeValues.length === 1) {
+    conditions.push({ type: { $eq: typeValues[0] } });
+  } else {
+    conditions.push({ type: { $in: typeValues } });
+  }
+
+  if (allowedPis) {
+    conditions.push({ source_pi: { $in: allowedPis } });
+  }
+
+  const filter =
+    conditions.length === 1 ? conditions[0] : { $and: conditions };
+
+  // Query Pinecone with type filter and semantic embedding
+  const matches = await services.pinecone.query(embedding, {
+    top_k: k_explore,
+    filter,
+  });
+
+  if (matches.length === 0) {
+    return [];
+  }
+
+  // Fetch all entities in parallel
+  const matchIds = matches.map((m) => m.id);
+  const entities = await services.graphdb.getEntities(matchIds);
+
+  // Build candidates with semantic scores
+  const candidates: CandidatePath[] = [];
+
+  for (const match of matches) {
+    const entity = entities.get(match.id);
+    if (!entity) continue;
+
+    // Verify type matches (belt and suspenders)
+    if (!typeValues.includes(entity.type)) continue;
 
     candidates.push({
       current_entity: entity,

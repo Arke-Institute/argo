@@ -112,8 +112,34 @@ export class Parser {
       return { type: 'exact_id', id: token.value };
     }
 
+    // type:X or type:X ~ "text" as entry point
+    if (token.type === 'TYPE_FILTER') {
+      this.advance();
+      const typeValues = token.value.split(',');
+
+      // Check for ~ followed by quoted string (semantic search within type)
+      if (this.current().type === 'TILDE') {
+        this.advance(); // consume ~
+        const semanticToken = this.current();
+        if (semanticToken.type !== 'QUOTED_STRING') {
+          throw new ParseError(
+            'Expected quoted string after ~',
+            semanticToken.position
+          );
+        }
+        this.advance();
+        return {
+          type: 'type_filter_semantic',
+          type_values: typeValues,
+          text: semanticToken.value,
+        };
+      }
+
+      return { type: 'type_filter', type_values: typeValues };
+    }
+
     throw new ParseError(
-      `Expected entry point (quoted string or @id), got ${token.type}`,
+      `Expected entry point (quoted string, @id, or type:), got ${token.type}`,
       token.position
     );
   }

@@ -42,7 +42,9 @@ export interface PathAST {
 
 export type EntryPoint =
   | { type: 'semantic_search'; text: string }
-  | { type: 'exact_id'; id: string };
+  | { type: 'exact_id'; id: string }
+  | { type: 'type_filter'; type_values: string[] }
+  | { type: 'type_filter_semantic'; type_values: string[]; text: string };
 
 export interface Hop {
   direction: 'outgoing' | 'incoming' | 'bidirectional';
