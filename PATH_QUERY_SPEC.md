@@ -6,10 +6,10 @@ A lightweight DSL for traversing the Arke knowledge graph with semantic flexibil
 
 ## Overview
 
-Path queries describe a traversal through the knowledge graph, starting from an entry point and following edges (with fuzzy semantic matching) to reach target entities. The language prioritizes readability and flexibility over rigid schema matching.
+Path queries describe a traversal through the knowledge graph, starting from an entry point and following edges to reach target entities. The engine uses a **triad-based execution model** that efficiently finds paths using Neo4j's native graph algorithms.
 
 ```
-"George Washington" -[born]-> type:date <-[event]- type:event
+"alice austen" -[*]{,4}-> type:person ~ "photographer"
 ```
 
 ---
@@ -22,114 +22,175 @@ Every query starts with an entry point on the left side.
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `"text"` | Semantic search - finds entities matching the text | `"George Washington"` |
+| `"text"` | Semantic search - finds entities matching the text | `"alice austen"` |
 | `@canonical_id` | Exact entity lookup by canonical ID | `@george_washington` |
+| `type:X ~ "text"` | Type filter + semantic search | `type:person ~ "photographer"` |
+| `type:X` | Type filter only (zero-hop queries only) | `type:person` |
 
 **Semantic search** embeds the text and queries Pinecone, returning the top-k most similar entities.
 
 **Exact lookup** fetches a specific entity from Neo4j by its canonical ID.
 
+**Type + semantic** queries Pinecone with a type filter and semantic ranking.
+
+> **IMPORTANT: Entry Point Restrictions**
+>
+> For queries with hops (edge traversal), the entry point MUST be:
+> - Semantic search: `"text"`
+> - Exact ID: `@canonical_id`
+> - Type + semantic: `type:X ~ "text"`
+>
+> **Type-only entry points (`type:X`) are NOT supported for queries with hops.**
+> This is because the triad model requires known source entity IDs.
+>
+> Type-only entry points are valid for zero-hop queries only (no traversal).
+
 ### 2. Edge Traversal
 
-Edges connect entities and specify direction and relation matching.
+Edges connect entities and specify direction.
 
 | Syntax | Description |
 |--------|-------------|
-| `-[term]->` | Outgoing edge with fuzzy relation match |
-| `<-[term]-` | Incoming edge with fuzzy relation match |
-| `<-[term]->` | Bidirectional edge (both directions) |
-| `-[term1, term2]->` | Outgoing edge matching ANY of the terms |
-| `-[*]->` | Outgoing edge with any relation (wildcard) |
-| `<-[*]-` | Incoming edge with any relation (wildcard) |
-| `<-[*]->` | Bidirectional wildcard (any relation, both directions) |
+| `-[*]->` | Outgoing edge, any relation |
+| `<-[*]-` | Incoming edge, any relation |
+| `<-[*]->` | Bidirectional edge (both directions) |
+| `-[term]->` | Outgoing edge with fuzzy relation match (single-hop only) |
+| `-[term1, term2]->` | Outgoing edge matching ANY of the terms (single-hop only) |
 
-**Fuzzy relation matching**: The term(s) in brackets are embedded and compared against the actual relation predicates in the graph. The top-k most similar relations are followed.
+**Wildcard (`[*]`)** follows all edges without relation filtering. This is the **recommended pattern** for most queries as it leverages the triad model's efficiency.
 
-**Bidirectional traversal**: The `<-[...]->` syntax follows edges in both directions simultaneously. Outgoing and incoming edges are processed separately, merged, and deduplicated. Each edge in the result path records its actual direction (`outgoing` or `incoming`).
-
-**Example**: `-[born, birth]->` will match relations like `BORN_ON`, `BIRTH_DATE`, `DATE_OF_BIRTH`, etc.
+**Fuzzy relation matching** embeds the term(s) and compares against actual predicates. **This is only supported for single-hop queries.** For multi-hop traversal, use `[*]` and filter results.
 
 ### 2a. Variable-Depth Traversal
 
-For exploring multiple hops without specifying exact depth:
+For exploring multiple hops:
 
 | Syntax | Description |
 |--------|-------------|
 | `-[*]{1,4}->` | 1 to 4 hops |
 | `-[*]{,4}->` | Up to 4 hops (shorthand for {1,4}) |
-| `-[*]{2,}->` | 2 or more hops (capped by default max_depth=4) |
+| `-[*]{2,}->` | 2 or more hops (capped at max_depth=4) |
 | `-[*]{3}->` | Exactly 3 hops |
-| `-[term]{1,3}->` | Variable depth with fuzzy relation matching |
 
-**Execution**: BFS (breadth-first search) where each depth builds on previous:
-- Results collected at each depth that match the final filter
-- For type-only filters: closer results always win (early termination when k results found)
-- For semantic filters: continues to max depth (deeper match might beat closer)
+> **IMPORTANT: Variable-depth queries MUST use wildcard `[*]`**
+>
+> Fuzzy relation matching (`-[term]{,N}->`) is NOT supported for variable-depth.
+> The triad model finds paths first, then scoring happens post-hoc.
 
-**Scoring**: Path scores multiply naturally (similarity < 1.0 = natural decay). No artificial depth penalty.
+**Execution**: Uses Neo4j's native path-finding algorithms. Queries depths 1 through N, returning shortest paths first.
 
-**Stacking**: Variable-depth hops can be chained with other hops (fixed or variable):
+**Maximum Depth**: The maximum supported depth is **4 hops**. Higher depths cause exponential query times in densely connected graph regions.
+
+**Stacking**: Variable-depth hops can be chained:
 
 ```
 @entity -[*]{,2}-> type:person -[*]{,3}-> type:file
 ```
 
-Each segment produces results that become starting points for the next segment. Full paths are tracked across all segments.
+Each segment produces results that become starting points for the next segment.
 
-### 3. Node Filters
+### 3. Node Filters (Targets)
 
-After an edge, you can filter what entities to include.
+After an edge, you specify what entities to find.
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `type:typename` | Filter by entity type | `type:person` |
-| `type:t1,t2,t3` | Filter by multiple types (OR) | `type:file,document` |
-| `type:typename ~ "text"` | Type filter + semantic ranking | `type:event ~ "military battle"` |
-| `type:t1,t2 ~ "text"` | Multi-type + semantic ranking | `type:file,document ~ "letter"` |
+| `type:X` | Filter by entity type | `type:person` |
+| `type:X,Y,Z` | Filter by multiple types (OR) | `type:file,document` |
+| `type:X ~ "text"` | Type filter + semantic ranking | `type:event ~ "military battle"` |
 | `@canonical_id` | Exact entity match | `@mount_vernon` |
-| `"text"` | Semantic filter on candidates | `"historical event"` |
-| (none) | No filter, accept all | `-[knows]->` at end of query |
+| `"text"` | Semantic search on candidates | `"historical significance"` |
 
-**Type filter** restricts results to entities of that type. Valid types: `person`, `place`, `organization`, `date`, `file`, `event`, `pi`, `unknown`.
+> **IMPORTANT: Target filter is REQUIRED for queries with hops**
+>
+> You cannot leave the target empty. These are NOT supported:
+> ```
+> "query" -[*]->              // ERROR: no target
+> "query" -[*]{,4}->          // ERROR: no target
+> ```
+>
+> Every hop must end with a target filter (type, semantic, or exact_id).
 
-**Multi-type filter** allows matching any of several types using comma-separated values. Example: `type:file,document` matches both file and document entities. Useful when entity types overlap or when searching across related types.
-
-**Combined type + semantic filter** first filters by type(s), then ranks within that set by semantic similarity. The `~` operator means "similar to". Example: `type:event ~ "military battle"` finds events that are semantically similar to "military battle".
-
-**Semantic filter** (quoted text at a non-entry position) ranks the candidate entities by semantic similarity to the text. This is different from entry-point search: it searches *within* the candidates found by traversal, not the whole index.
+**Recommended pattern**: Use `type:X` or `type:X ~ "semantic"` for targets. This allows the triad model to efficiently query Neo4j.
 
 ### 4. Zero-Hop Queries
 
-A filter can be applied directly to the entry point without any edge traversal. This is useful for disambiguating semantic searches.
+A filter applied directly to the entry point without edge traversal.
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
 | `"text" type:X` | Semantic search filtered by type | `"Washington" type:person` |
 | `"text" type:X ~ "ranking"` | Type filter + semantic ranking | `"letter" type:file ~ "correspondence"` |
-| `@id type:X` | Exact lookup verified by type | `@washington type:person` |
+| `type:X ~ "text"` | Type + semantic (entry-only) | `type:person ~ "photographer"` |
+| `type:X` | Type filter only | `type:person` |
 
-**Zero-hop queries** solve the semantic disambiguation problem where edge traversal would find connected entities rather than direct matches. For example, `"Washington" type:person` returns persons matching "Washington" directly, rather than traversing to connected entities.
-
-**Execution**: The entry point is resolved normally (semantic search or exact lookup), then the filter is applied to narrow/rank results without any graph traversal.
+**Zero-hop queries** return direct matches without graph traversal. Type-only entry points are allowed here since no traversal is needed.
 
 ### 5. Chain Structure
 
-A complete query is a chain of: `entry_point` followed by one or more `edge + filter` pairs.
+A complete query is: `entry_point` optionally followed by `edge + filter` pairs.
 
 ```
-entry_point [-[relation]-> filter]*
+entry_point [edge filter]+
 ```
 
-The **rightmost position** is always the result target.
+The **rightmost position** is the result target.
+
+---
+
+## Recommended Query Patterns
+
+The triad execution model works best with certain patterns. Here are the recommended approaches:
+
+### Best Patterns
+
+```
+# Semantic entry + type target (OPTIMAL)
+"alice austen" -[*]{,4}-> type:person
+
+# Semantic entry + semantic target (OPTIMAL)
+"alice austen" -[*]{,4}-> type:person ~ "photographer"
+
+# Exact ID entry + type target (OPTIMAL)
+@6a9dbb57-9096-4753-a0e6-26299324161f -[*]{,4}-> type:file
+
+# Type+semantic entry + type target (OPTIMAL)
+type:person ~ "alice austen" -[*]{,4}-> type:collection
+
+# Single-hop with fuzzy relation (SUPPORTED)
+"alice austen" -[photographed, captured]-> type:person
+```
+
+### Avoid These Patterns
+
+```
+# Type-only entry with hops (NOT SUPPORTED)
+type:person -[*]{,4}-> type:file
+# ERROR: "Queries with hops require a semantic search or exact ID entry point"
+
+# No target filter (NOT SUPPORTED)
+"alice austen" -[*]->
+# ERROR: No target specified
+
+# Fuzzy relations on variable-depth (NOT SUPPORTED)
+"alice austen" -[photographed]{,4}-> type:person
+# Use: "alice austen" -[*]{,4}-> type:person instead
+
+# Very long chains (SLOW)
+"query" -[*]{,4}-> type:X -[*]{,4}-> type:Y -[*]{,4}-> type:Z
+# Each segment queries the graph separately; prefer fewer, deeper hops
+```
 
 ---
 
 ## Complete Grammar
 
 ```
-query           := entry_point entry_filter? (edge filter?)*
-entry_point     := semantic_search | exact_entity
-entry_filter    := filter                           // Zero-hop: filter applied directly to entry
+query           := entry_point entry_filter? (edge filter)*
+entry_point     := semantic_search | exact_entity | type_semantic_entry | type_entry
+type_semantic_entry := type_filter "~" semantic_search
+type_entry      := type_filter                    // Only valid for zero-hop
+entry_filter    := filter                         // Zero-hop: filter applied directly
 edge            := outgoing | incoming | bidirectional
 outgoing        := "-[" relation "]" depth_range? "->"
 incoming        := "<-[" relation "]" depth_range? "-"
@@ -141,11 +202,11 @@ depth_range     := "{" range_spec "}"
 range_spec      := min_max | exact
 min_max         := integer? "," integer?
 exact           := integer
-filter          := combined_filter | type_filter | exact_entity | semantic_search | ε
+filter          := combined_filter | type_filter | exact_entity | semantic_search
 combined_filter := type_filter "~" semantic_search
 type_filter     := "type:" typename_list
 typename_list   := typename ("," typename)*
-typename        := "person" | "place" | "organization" | "date" | "file" | "event" | "pi" | "unknown"
+typename        := "person" | "place" | "organization" | "date" | "file" | "event" | "pi" | "collection" | "document" | "unknown"
 exact_entity    := "@" canonical_id
 semantic_search := '"' text '"'
 canonical_id    := [a-zA-Z0-9_:-]+
@@ -157,19 +218,58 @@ integer         := [0-9]+
 
 ## Execution Model
 
+### The Triad Model
+
+The engine uses a **triad-based execution model**:
+
+```
+[source candidates] -[depth N]-> [target constraint]
+```
+
+**Execution flow**:
+1. Resolve source candidates via Pinecone semantic search
+2. Resolve target candidates (if semantic target) via Pinecone
+3. Use Neo4j's native path-finding to connect sources to targets
+4. Score and rank results
+
+**Benefits**:
+- 2-3 HTTP requests instead of 500+ (for complex queries)
+- Execution time: 2-5 seconds for 4-hop queries
+- Leverages Neo4j's optimized graph algorithms
+
 ### Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `k` | int | 5 | Number of final results to return |
-| `k_explore` | int | `k * 3` | Beam width for intermediate traversal (how many candidates to explore at each hop) |
-| `lineage` | object | null | PI lineage filter - scope query to entities within a PI hierarchy |
-| `enrich` | bool | false | Fetch content for PI and File entities in results |
-| `enrich_limit` | int | 2000 | Max characters to fetch per entity when enriching |
+| `k_explore` | int | `k * 3` | Beam width for intermediate traversal |
+| `lineage` | object | null | PI lineage filter |
+| `enrich` | bool | false | Fetch content for PI and File entities |
+| `enrich_limit` | int | 2000 | Max characters per enriched entity |
+
+### Scoring
+
+Results are scored based on:
+
+```
+final_score = ((source_score + target_score) / 2) * depth_decay * relation_score
+
+where:
+- source_score: Pinecone semantic match at entry (0.0-1.0)
+- target_score: Pinecone semantic match at target, or 1.0 if type-only
+- depth_decay: 0.9^(path_length - 1)
+  - 1 hop: 1.0
+  - 2 hops: 0.9
+  - 3 hops: 0.81
+  - 4 hops: 0.729
+- relation_score: From fuzzy relation matching (single-hop only), or 1.0
+```
+
+**Depth decay** naturally favors shorter paths while still returning deeper results when relevant.
 
 ### Lineage Filtering
 
-The `lineage` parameter scopes queries to entities and relationships within a PI's hierarchy. This is useful for restricting results to a specific data source or collection.
+The `lineage` parameter scopes queries to entities within a PI hierarchy.
 
 ```json
 {
@@ -186,20 +286,9 @@ The `lineage` parameter scopes queries to entities and relationships within a PI
 | `sourcePi` | string | The PI to start lineage resolution from |
 | `direction` | string | `"ancestors"`, `"descendants"`, or `"both"` |
 
-**Execution**:
-1. Before query execution, the lineage API is called to get all PIs in the specified direction
-2. Entry point resolution filters Pinecone by `source_pi $in [allowed_pis]`
-3. Each hop filters relationships by `source_pi` and entities by `source_pis`
-4. Results only include entities/relationships from the allowed PIs
-
-**Use cases**:
-- Scoping to a single collection: `direction: "descendants"` from a collection PI
-- Finding provenance: `direction: "ancestors"` to find parent PIs
-- Full lineage: `direction: "both"` for complete lineage context
-
 ### Content Enrichment
 
-The `enrich` parameter fetches content for PI and File entities in results.
+The `enrich` parameter fetches content for PI and File entities.
 
 ```json
 {
@@ -209,705 +298,221 @@ The `enrich` parameter fetches content for PI and File entities in results.
 }
 ```
 
-**For File entities**: Fetches content from IPFS based on `content_type`:
-- `text`: Raw text content (truncated to `enrich_limit`)
-- `ref_*`: Parsed JSON blob with structured data
-
-**For PI entities**: Fetches manifest components:
-- `pinx`: Short identifier
-- `description`: Human-readable description
-- `manifest.version`: Manifest version
-- `manifest.children_count`: Number of child PIs
-
-### Execution Steps
-
-Given a query like:
-```
-"George Washington" -[born]-> type:date <-[event]- type:event
-```
-
-**Step 1: Entry Point Resolution**
-
-```
-entry_point = "George Washington" (semantic search)
-
-→ Call Pinecone: embed("George Washington"), query top_k=k_explore
-→ Results: [george_washington (0.95), washington_irving (0.72), ...]
-→ Keep top k_explore results
-→ current_entities = [george_washington, ...]
-   paths = [[george_washington], ...]
-```
-
-**Step 2: First Edge Traversal**
-
-```
-edge = -[born]->
-filter = type:date
-
-For each entity in current_entities:
-  → Get all outgoing relations from Neo4j
-  → Embed relation predicates (cached)
-  → Score against embed("born")
-  → Keep top k_explore relations by score
-
-  For each matched relation:
-    → Add target entity to candidates
-    → Extend path: [george_washington, -BORN_ON->, date_1732_02_22]
-
-→ Apply type filter: keep only type:date
-→ current_entities = [date_1732_02_22]
-   paths = [[george_washington, -BORN_ON->, date_1732_02_22]]
-```
-
-**Step 3: Second Edge Traversal**
-
-```
-edge = <-[event]-
-filter = type:event
-
-For each entity in current_entities:
-  → Get all INCOMING relations from Neo4j
-  → Score against embed("event")
-  → Keep top k_explore relations by score
-
-  For each matched relation:
-    → Add SOURCE entity to candidates (incoming edge)
-    → Extend path
-
-→ Apply type filter: keep only type:event
-→ current_entities = [battle_of_yorktown, ...]
-   paths = [[george_washington, -BORN_ON->, date_1732_02_22, <-OCCURRED_ON-, battle_of_yorktown], ...]
-```
-
-**Step 4: Return Results**
-
-```json
-{
-  "results": [
-    {
-      "entity": { "canonical_id": "battle_of_yorktown", "label": "Battle of Yorktown", "type": "event", ... },
-      "path": [
-        { "entity": "george_washington", "label": "George Washington" },
-        { "edge": "BORN_ON", "direction": "outgoing" },
-        { "entity": "date_1732_02_22", "label": "February 22, 1732" },
-        { "edge": "OCCURRED_ON", "direction": "incoming" },
-        { "entity": "battle_of_yorktown", "label": "Battle of Yorktown" }
-      ],
-      "score": 0.87
-    }
-  ],
-  "metadata": {
-    "hops": 2,
-    "total_candidates_explored": 15,
-    "execution_time_ms": 230
-  }
-}
-```
-
----
-
-## Semantic Filter at End
-
-When the final position is a quoted string (not a type filter), it acts as a semantic filter on candidates:
-
-```
-"George Washington" -[born]-> type:date <-[*]- "historical event"
-```
-
-Execution of final step:
-
-```
-edge = <-[*]- (wildcard, all incoming relations)
-filter = "historical event" (semantic)
-
-For each entity in current_entities:
-  → Get ALL incoming relations (no relation filtering due to wildcard)
-  → Collect all source entities as candidates
-
-→ Semantic filter:
-  → Get candidate IDs: [event_123, meeting_456, letter_789, ...]
-  → Query Pinecone with embed("historical event"), filter to only these IDs
-  → Rank by similarity
-  → Keep top k_explore by score
-
-→ current_entities = [event_123, ...]
-```
-
-This allows finding entities that are:
-1. Connected to the traversal path
-2. Semantically similar to a concept
+**For File entities**: Fetches content from IPFS
+**For PI entities**: Fetches manifest components (pinx, description, etc.)
 
 ---
 
 ## Examples
 
-### Example 1: Simple Attribute Lookup
+### Example 1: Find Related Entities
 
-**Query**: "When was George Washington born?"
-
-```
-"George Washington" -[born, birth]-> type:date
-```
-
-**Execution**:
-1. Semantic search "George Washington" → `george_washington`
-2. Outgoing edges matching "born" or "birth" → follows `BORN_ON`
-3. Filter to dates → `date_1732_02_22`
-
-**Result**: February 22, 1732
-
----
-
-### Example 2: Reverse Lookup
-
-**Query**: "What documents mention Mount Vernon?"
+**Query**: "Find people connected to Alice Austen"
 
 ```
-"Mount Vernon" <-[mentioned, about, describes]- type:file
+"alice austen" -[*]{,4}-> type:person
 ```
 
 **Execution**:
-1. Semantic search "Mount Vernon" → `mount_vernon`
-2. Incoming edges matching mention-related terms
-3. Filter to files → `[arke:01ABC:file_001, ...]`
+1. Semantic search "alice austen" → source candidates
+2. GraphDB: find persons within 4 hops of sources
+3. Return paths ranked by score
 
 ---
 
-### Example 3: Multi-Hop
+### Example 2: Semantic Target
 
-**Query**: "What events happened on George Washington's birthday?"
+**Query**: "Find photographers connected to Alice Austen"
 
 ```
-"George Washington" -[born]-> type:date <-[happened, occurred, event]- type:event
+"alice austen" -[*]{,4}-> type:person ~ "photographer"
 ```
 
 **Execution**:
-1. Find Washington → traverse to birth date → find events on that date
+1. Semantic search "alice austen" → source candidates
+2. Semantic search "photographer" filtered to type:person → target candidates
+3. GraphDB: find paths between sources and targets
+4. Return paths ranked by combined source/target scores
 
 ---
 
-### Example 4: From Exact Entity
+### Example 3: From Exact Entity
 
-**Query**: Starting from a known entity
+**Query**: "Find files connected to a known entity"
 
 ```
-@continental_congress -[member, delegate]-> type:person
+@6a9dbb57-9096-4753-a0e6-26299324161f -[*]{,4}-> type:file
 ```
 
 **Execution**:
-1. Direct lookup of `continental_congress`
-2. Outgoing edges matching "member" or "delegate"
-3. Filter to persons
+1. Direct lookup of entity
+2. GraphDB: find files within 4 hops
+3. Return paths
 
 ---
 
-### Example 5: Open-Ended Exploration
+### Example 4: Single-Hop with Relation Filtering
 
-**Query**: "Find anything interesting connected to Thomas Jefferson"
+**Query**: "Find people Alice Austen photographed"
 
 ```
-"Thomas Jefferson" -[*]-> "significant historical"
+"alice austen" -[photographed, captured, took]-> type:person
 ```
 
 **Execution**:
-1. Find Jefferson
-2. Follow ALL outgoing relations
-3. Semantically filter results by "significant historical"
+1. Semantic search "alice austen" → source candidates
+2. GraphDB: find paths of depth 1 to type:person
+3. Score relations against "photographed", "captured", "took"
+4. Re-rank results by relation score
 
 ---
 
-### Example 6: File to Entity
+### Example 5: Zero-Hop Query
 
-**Query**: "Who is mentioned in this document?"
-
-```
-@arke:01ABC:file_001 -[mentions, contains, about]-> type:person
-```
-
----
-
-### Example 7: Finding Source Documents
-
-**Query**: "What files contain information about the Revolutionary War?"
-
-```
-"Revolutionary War" <-[*]- type:file
-```
-
----
-
-### Example 8: Long Chain
-
-**Query**: "Find places where people George Washington worked with lived"
-
-```
-"George Washington" -[worked, collaborated, served]-> type:person -[lived, resided]-> type:place
-```
-
-**Execution**:
-1. Find Washington
-2. Find people he worked with
-3. Find where those people lived
-
----
-
-### Example 9: Variable-Depth
-
-**Query**: "Find all files within 4 hops of Washington"
-
-```
-@george_washington -[*]{,4}-> type:file
-```
-
-**Execution**:
-1. BFS expansion at each depth level (1, 2, 3, 4)
-2. Collect files found at each level
-3. Return closest matches first (closer = higher score)
-
----
-
-### Example 10: Variable-Depth with Semantic Filter
-
-**Query**: "Find events related to military battles, up to 3 hops"
-
-```
-@george_washington -[*]{1,3}-> type:event ~ "military battle"
-```
-
-**Execution**:
-1. BFS expansion up to 3 levels
-2. At each level, filter to events and rank by semantic similarity
-3. Continue to max depth (deeper semantic match might beat closer)
-
----
-
-### Example 11: Stacked Variable-Depth
-
-**Query**: "Find organizations through people connected to the Declaration"
-
-```
-@declaration -[*]{1,2}-> type:person -[*]{,3}-> type:organization
-```
-
-**Execution**:
-1. First segment: Find persons within 1-2 hops of declaration
-2. Those persons become starting points for second segment
-3. Second segment: Find organizations within 1-3 hops of each person
-4. Merge and deduplicate results across all paths
-
-**Result path example**:
-```
-declaration → (SIGNED_BY) → washington → (AFFILIATED_WITH) → continental_congress
-```
-
----
-
-### Example 12: Zero-Hop Query
-
-**Query**: "Find people named Washington (direct match, no traversal)"
+**Query**: "Find people named Washington"
 
 ```
 "Washington" type:person
 ```
 
 **Execution**:
-1. Semantic search "Washington" → returns various matches
-2. Filter directly by type:person → only person entities
-3. No edge traversal (zero hops)
-
-**Use case**: Disambiguation - find entities directly rather than connected entities.
+1. Semantic search "Washington"
+2. Filter by type:person
+3. No traversal (zero hops)
 
 ---
 
-### Example 13: Zero-Hop with Semantic Ranking
+### Example 6: Type + Semantic Entry
 
-**Query**: "Find letters about correspondence"
+**Query**: "Find collections near photographers"
 
 ```
-"letter" type:file ~ "correspondence"
+type:person ~ "photographer" -[*]{,3}-> type:collection
 ```
 
 **Execution**:
-1. Semantic search "letter"
-2. Filter to type:file
-3. Re-rank by semantic similarity to "correspondence"
+1. Semantic search "photographer" filtered to type:person
+2. GraphDB: find collections within 3 hops
+3. Return paths
 
 ---
 
-### Example 14: Bidirectional Traversal
+### Example 7: Chained Hops
+
+**Query**: "Find files through people connected to a collection"
+
+```
+@collection_id -[*]{,2}-> type:person -[*]{,2}-> type:file
+```
+
+**Execution**:
+1. First triad: find persons within 2 hops of collection
+2. Second triad: find files within 2 hops of those persons
+3. Combine paths and scores
+
+---
+
+### Example 8: Bidirectional Search
 
 **Query**: "Find all persons connected to Washington in any direction"
 
 ```
-@george_washington <-[*]-> type:person
+"george washington" <-[*]-> type:person
 ```
 
 **Execution**:
-1. Start from washington entity
-2. Follow ALL edges (both outgoing and incoming)
-3. Filter to persons
-
-**Use case**: Exploring connections without knowing relationship direction.
+1. Semantic search for Washington
+2. GraphDB: find persons connected in either direction
+3. Return with direction recorded in path
 
 ---
 
-### Example 15: Bidirectional with Relation Terms
+### Example 9: Files Within a PI
 
-**Query**: "Find entities related through family connections"
+**Query**: "Find files in a specific processing instance"
 
 ```
-@george_washington <-[family, relative, spouse, child]-> type:person
+@arke:pi_id -[*]-> type:file
+```
+
+---
+
+### Example 10: Semantic Filter Only Target
+
+**Query**: "Find historically significant entities near Jefferson"
+
+```
+"thomas jefferson" -[*]{,3}-> "historically significant"
 ```
 
 **Execution**:
-1. Follow edges matching family-related terms in both directions
-2. Filter to person entities
+1. Semantic search "thomas jefferson" → sources
+2. Semantic search "historically significant" → target candidates
+3. GraphDB: find paths between sources and targets
+4. Return with semantic scores from both ends
 
 ---
 
-### Example 16: Lineage-Scoped Query
+## Limitations
 
-**Query**: "Find people in the Drexel collection"
+### Not Supported
 
-**Request**:
-```json
-{
-  "path": "\"person\" type:person",
-  "k": 10,
-  "lineage": {
-    "sourcePi": "arke:drexel_historical_collection",
-    "direction": "descendants"
-  }
-}
-```
+| Pattern | Status | Alternative |
+|---------|--------|-------------|
+| `type:X -[*]-> type:Y` | NOT SUPPORTED | Use `type:X ~ "semantic" -[*]-> type:Y` |
+| `"query" -[*]->` (empty target) | NOT SUPPORTED | Always specify a target filter |
+| `-[term]{,N}->` (fuzzy + variable-depth) | NOT SUPPORTED | Use `-[*]{,N}->` then filter |
+| Depth > 4 | NOT SUPPORTED | Maximum depth is 4 hops |
+| Property filters | NOT YET | `type:person{country: "USA"}` |
+| Negation | NOT YET | `-[!enemy]->` |
+| Aggregations | NOT YET | Count, group by, etc. |
 
-**Execution**:
-1. Resolve lineage: get all PIs descended from drexel_historical_collection
-2. Semantic search "person" filtered to source_pi in lineage
-3. Filter to type:person
+### Error Responses
 
----
-
-### Example 17: Enriched File Query
-
-**Query**: "Get files mentioning a topic with content"
-
-**Request**:
-```json
-{
-  "path": "\"Revolutionary War\" <-[*]- type:file",
-  "k": 5,
-  "enrich": true,
-  "enrich_limit": 5000
-}
-```
-
-**Response** (partial):
-```json
-{
-  "results": [{
-    "entity": {
-      "canonical_id": "arke:doc:letter_001",
-      "label": "Letter from Washington",
-      "type": "file",
-      "content": {
-        "text": "Dear Sir, I write to inform you of our victory...",
-        "format": "text",
-        "truncated": false
-      }
-    }
-  }]
-}
-```
-
----
-
-### Example 18: Finding PIs (Processing Instances)
-
-**Query**: "Find PIs related to historical collections"
-
-```
-"historical collection" type:pi
-```
-
-**Execution**:
-1. Semantic search "historical collection"
-2. Filter directly to type:pi
-
-**Use case**: Find data source collections by topic.
-
----
-
-### Example 19: Navigating PI Hierarchy
-
-**Query**: "Find child PIs of a collection"
-
-```
-@arke:drexel_collection -[HAS_CHILD]-> type:pi
-```
-
-**Execution**:
-1. Start from known PI
-2. Follow HAS_CHILD relationships
-3. Filter to PI entities
-
-**Note**: PI hierarchy uses `HAS_CHILD` relationships. Use incoming `<-[HAS_CHILD]-` to find parent PIs.
-
----
-
-### Example 20: Files Within a PI
-
-**Query**: "Find all files in a specific PI"
-
-```
-@arke:drexel_collection -[HAS_FILE]-> type:file
-```
-
-**Execution**:
-1. Start from PI
-2. Follow HAS_FILE relationships
-3. Return file entities
-
-**Alternative with semantic ranking**:
-```
-@arke:drexel_collection -[HAS_FILE]-> type:file ~ "correspondence letters"
-```
-
----
-
-### Example 21: From File to Mentioned Entities
-
-**Query**: "What people and places are mentioned in this file?"
-
-```
-@arke:doc:letter_001 -[MENTIONS, REFERS_TO]-> type:person
-```
-
-```
-@arke:doc:letter_001 -[MENTIONS, REFERS_TO]-> type:place
-```
-
-**Use case**: Extract entities from a document.
-
----
-
-### Example 22: PI with Enriched Metadata
-
-**Query**: "Get PI details with manifest info"
-
-**Request**:
-```json
-{
-  "path": "@arke:drexel_collection",
-  "enrich": true
-}
-```
-
-**Response** (partial):
-```json
-{
-  "results": [{
-    "entity": {
-      "canonical_id": "arke:drexel_collection",
-      "label": "Drexel Historical Collection",
-      "type": "pi",
-      "content": {
-        "pinx": "drexel",
-        "description": "Historical documents from Drexel University archives",
-        "manifest": {
-          "version": 1,
-          "children_count": 15
-        }
-      }
-    }
-  }]
-}
-```
-
----
-
-### Example 23: Files with Structured Data
-
-**Query**: "Get reference files with parsed JSON"
-
-**Request**:
-```json
-{
-  "path": "\"metadata\" type:file ~ \"structured data\"",
-  "enrich": true
-}
-```
-
-**Response** (partial - for a file with content_type: ref_json):
-```json
-{
-  "results": [{
-    "entity": {
-      "canonical_id": "arke:ref:metadata_001",
-      "type": "file",
-      "content": {
-        "data": {
-          "author": "George Washington",
-          "date": "1776-07-04",
-          "recipients": ["John Adams", "Thomas Jefferson"]
-        },
-        "format": "json"
-      }
-    }
-  }]
-}
-```
-
----
-
-### Example 24: Cross-PI Entity Search
-
-**Query**: "Find people mentioned across multiple collections"
-
-**Request**:
-```json
-{
-  "path": "\"Benjamin Franklin\" type:person",
-  "k": 10
-}
-```
-
-**Use case**: Without lineage filtering, searches across all PIs to find entity mentions in different collections.
-
----
-
-### Example 25: File to PI Provenance
-
-**Query**: "What PI does this file belong to?"
-
-```
-@arke:doc:letter_001 <-[HAS_FILE]- type:pi
-```
-
-**Execution**:
-1. Start from file
-2. Follow incoming HAS_FILE edge
-3. Return the parent PI
-
-**Use case**: Trace provenance of a document back to its source collection.
-
----
-
-## Edge Cases
-
-### Low Similarity Scores
-
-With k-based selection (no threshold), queries always return results even with low semantic similarity. A query like `"xyzzy nonsense"` will still return the top-k most similar entities, potentially with very low scores (e.g., 0.1).
-
-**Implication**: Callers should check the `score` field in results to assess confidence. Low scores indicate weak matches.
-
-### No Entry Point Found
-
-This only occurs when:
-- The Pinecone index is empty
-- For `@id` lookup, the entity doesn't exist in GraphDB
-
+**Invalid entry point**:
 ```json
 {
   "results": [],
   "metadata": {
-    "error": "no_entry_point",
-    "message": "No matching entities found for entry point"
+    "error": "invalid_entry_point",
+    "reason": "Queries with hops require a semantic search or exact ID entry point. Type-only entry points (type:X) are only valid for zero-hop queries."
   }
 }
 ```
 
-### No Path Found
+**Unsupported query pattern**:
+```json
+{
+  "results": [],
+  "metadata": {
+    "error": "unsupported_query",
+    "reason": "Variable-depth hop requires a target filter (type, semantic, or exact_id)"
+  }
+}
+```
 
-This occurs when:
-- An entity has no relationships in the specified direction
-- A type filter excludes all candidates at some hop
-
+**No path found**:
 ```json
 {
   "results": [],
   "metadata": {
     "error": "no_path_found",
-    "reason": "Traversal stopped at hop 1 - no matching relations or entities",
+    "reason": "Traversal stopped at hop 1 - no matching paths found",
     "stopped_at_hop": 1,
-    "partial_path": [{ "entity": "george_washington", "label": "George Washington" }]
+    "partial_path": [...]
   }
 }
 ```
 
-### No Entities Match Type Filter
-
-```
-"George Washington" -[born]-> type:organization
-```
-
-**Behavior**: Return empty. Birth dates aren't organizations.
-
-### Ambiguous Entry Point
-
-```
-"Washington" -[*]-> type:date
-```
-
-**Behavior**: Multiple entities may match. With `k=3`:
-- Follow paths from all k entry points
-- Merge and deduplicate results
-- Score final results by cumulative path score
-
-### Cycles
-
-```
-"George Washington" -[knows]-> type:person -[knows]-> type:person -[knows]-> type:person
-```
-
-**Behavior**:
-- Track visited entities per path
-- Skip entities already in the current path
-- Different paths may visit the same entity
-
-### Empty Relation Term List
-
-```
-"George Washington" -[]-> type:date
-```
-
-**Behavior**: Parse error. Use `[*]` for wildcard.
-
 ---
 
-## Relation Matching Details
+## Safety Limits
 
-### Pre-computed Relation Embeddings
-
-For efficiency, all unique relation predicates in Neo4j should have pre-computed embeddings:
-
-```
-BORN_ON         → [0.12, -0.34, ...]
-AFFILIATED_WITH → [0.56, 0.78, ...]
-MENTIONED_IN    → [-0.23, 0.45, ...]
-...
-```
-
-### Matching Algorithm
-
-Given fuzzy terms `[born, birth]` and candidate relations `[BORN_ON, DIED_ON, AFFILIATED_WITH]`:
-
-1. Embed each fuzzy term: `embed("born")`, `embed("birth")`
-2. For each candidate relation:
-   - Score = max similarity across all fuzzy terms
-   - `score(BORN_ON) = max(sim("born", BORN_ON), sim("birth", BORN_ON))`
-3. Rank relations by score
-4. Keep top k_explore by score
-
-### Exact Relation Matching
-
-For system relations that should match exactly, use the exact predicate:
-
-```
-"Mount Vernon" -[MENTIONED_IN]-> type:pi
-```
-
-If the term in brackets exactly matches a known predicate (case-insensitive), skip embedding and match directly.
+| Limit | Value | Reason |
+|-------|-------|--------|
+| MAX_DEPTH | 4 | Queries at depth 5+ cause exponential graph traversal (40+ seconds) |
+| QUERY_TIMEOUT | 5 seconds | Safety net for densely connected regions |
+| MAX_LIMIT | 1000 | Maximum results per GraphDB call |
 
 ---
 
@@ -924,7 +529,7 @@ interface QueryResponse {
 interface Result {
   entity: Entity;
   path: PathStep[];
-  score: number;  // Cumulative score across all hops
+  score: number;
 }
 
 interface PathStep {
@@ -933,7 +538,7 @@ interface PathStep {
   type?: string;        // Entity type
   edge?: string;        // Relation predicate
   direction?: "outgoing" | "incoming";
-  score?: number;       // Score for this hop
+  score?: number;       // Score for this step
 }
 
 interface Entity {
@@ -942,32 +547,7 @@ interface Entity {
   type: string;
   properties: Record<string, any>;
   source_pis: string[];
-  content?: EnrichedContent;  // Present when enrich=true
-}
-
-interface EnrichedContent {
-  // For files with content_type: text
-  text?: string;
-
-  // For files with ref_* types - parsed JSON blob
-  data?: Record<string, unknown>;
-
-  // Fallback if JSON parsing fails
-  raw?: string;
-
-  // For PIs - fetched from manifest components
-  pinx?: string | null;
-  description?: string | null;
-  manifest?: {
-    version?: number;
-    children_count?: number;
-  };
-
-  // Metadata
-  format?: "text" | "json" | "raw";
-  truncated?: boolean;
-  parse_error?: boolean;
-  fetch_error?: string;
+  content?: EnrichedContent;
 }
 
 interface Metadata {
@@ -978,69 +558,36 @@ interface Metadata {
   total_candidates_explored: number;
   execution_time_ms: number;
   error?: string;
+  reason?: string;
   partial_path?: PathStep[];
   stopped_at_hop?: number;
-  reason?: string;
-  lineage?: LineageMetadata;  // Present when lineage filter used
-}
-
-interface LineageMetadata {
-  sourcePi: string;
-  direction: string;
-  piCount: number;
-  truncated: boolean;
+  lineage?: LineageMetadata;
 }
 ```
 
 ---
 
-## Future Extensions
+## LLM Integration
 
-These features are not yet implemented:
+When translating natural language to path queries, the LLM should:
 
-- **Intersection queries**: Find entities connected to multiple entry points
-- **Property filters**: `type:person{country: "USA"}`
-- **Negation**: `-[!enemy]->` (relations NOT matching)
-- **Optional edges**: `-[born]->?` (zero or one hop)
-- **Named captures**: `"Washington" as $w -[*]-> $w` (backreferences)
-- **Aggregations**: Count, group by, etc.
+1. **Use semantic entry points**: Start with `"text"` or `type:X ~ "text"`, not `type:X` alone
+2. **Use wildcard relations**: Prefer `-[*]{,N}->` over `-[term]{,N}->`
+3. **Always specify targets**: Every hop must end with a type, semantic, or exact_id filter
+4. **Use type + semantic targets**: `type:X ~ "semantic"` is more precise than `type:X` alone
+5. **Prefer fewer, deeper hops**: One `-[*]{,4}->` is better than four `-[*]->`
+6. **Keep depth <= 4**: Maximum supported depth is 4 hops
 
----
+**Input**: "Find photographers connected to Alice Austen"
 
-## Implementation Notes
-
-### Caching Strategy
-
-1. **Relation embeddings**: Pre-compute and cache indefinitely (invalidate on new relation types)
-2. **Entity embeddings**: Already in Pinecone
-3. **Query term embeddings**: Cache with TTL (same terms often reused)
-
-### Performance Considerations
-
-- Each hop multiplies candidates by k
-- 3 hops with k=3: up to 27 paths
-- 5 hops with k=3: up to 243 paths
-- Beam search prunes low-scoring paths automatically
-
-### Safety Limits
-
-- **MAX_TOTAL_CANDIDATES = 1000**: Variable-depth traversal stops if this limit is reached
-- **DEFAULT_MAX_DEPTH = 4**: Used for unbounded `{2,}` syntax
-- **k_explore**: Limits candidates explored per hop (default: k × 3)
-
-### LLM Integration
-
-The LLM's job is to translate natural language to this path syntax:
-
-**Input**: "What events happened on George Washington's birthday?"
-
-**Output**:
+**Good output**:
 ```
-"George Washington" -[born, birth]-> type:date <-[happened, occurred, event, took_place]- type:event
+"alice austen" -[*]{,4}-> type:person ~ "photographer"
 ```
 
-The LLM should:
-1. Identify the entry point entity/concept
-2. Hypothesize reasonable relation terms (multiple synonyms help)
-3. Specify type filters where the intent is clear
-4. Use semantic filters for vague concepts
+**Bad output** (avoid):
+```
+type:person -[*]{,4}-> type:person    // Type-only entry not allowed
+"alice austen" -[photographed]{,4}->  // Fuzzy relation on variable-depth not supported
+"alice austen" -[*]->                 // No target specified
+```
