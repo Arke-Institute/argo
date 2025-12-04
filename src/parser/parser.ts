@@ -66,8 +66,9 @@ export class Parser {
   parse(): PathAST {
     const entry = this.parseEntryPoint();
 
-    // Check for optional entry filter (zero-hop query)
-    // This allows: "semantic search" type:person
+    // Check for optional entry filter
+    // This allows: "semantic search" type:person (zero-hop query)
+    // or: "semantic search" type:person -[*]-> (filter entry before traversal)
     // or: "semantic search" type:person ~ "ranking text"
     let entry_filter: Filter | undefined;
     const filterToken = this.current();
@@ -76,13 +77,7 @@ export class Parser {
       filterToken.type === 'QUOTED_STRING' ||
       filterToken.type === 'AT_ID'
     ) {
-      // Only parse as entry filter if NOT followed by arrow (which would start a hop)
-      const next = this.peek(1);
-      const isArrowStart =
-        next.type === 'ARROW_OUT_START' || next.type === 'ARROW_IN_START';
-      if (!isArrowStart) {
-        entry_filter = this.parseFilter() ?? undefined;
-      }
+      entry_filter = this.parseFilter() ?? undefined;
     }
 
     const hops: Hop[] = [];

@@ -1,5 +1,8 @@
 /**
  * Executor - Execute parsed path queries
+ *
+ * Uses triad-based execution: resolve endpoints, then find paths via GraphDB.
+ * This replaces the BFS approach which caused exponential subrequests.
  */
 
 import type { Services } from '../services';
@@ -7,14 +10,12 @@ import type {
   QueryParams,
   QueryResult,
   PathResult,
-  QueryMetadata,
   CandidatePath,
   LineageMetadata,
 } from '../types';
 import type { PathAST } from '../parser/types';
 import { resolveEntry, applyEntryFilter } from './entry';
-import { executeHop } from './traverse';
-import { executeVariableDepthHop } from './variable-depth';
+import { executeTriad } from './triad';
 
 const DEFAULT_K = 5;
 const DEFAULT_K_EXPLORE_MULTIPLIER = 3;
@@ -35,6 +36,22 @@ export async function execute(
   const k_explore = params.k_explore ?? k * DEFAULT_K_EXPLORE_MULTIPLIER;
 
   let candidatesExplored = 0;
+
+  // Validate entry point for queries with hops
+  // Type-only entry points are only valid for zero-hop queries
+  if (ast.hops.length > 0 && ast.entry.type === 'type_filter') {
+    return buildErrorResult(
+      params.path || '',
+      ast.hops.length,
+      k,
+      k_explore,
+      startTime,
+      0,
+      'invalid_entry_point',
+      'Queries with hops require a semantic search or exact ID entry point. Type-only entry points (type:X) are only valid for zero-hop queries.',
+      lineageMetadata
+    );
+  }
 
   // Resolve entry point
   let candidates = await resolveEntry(ast.entry, services, k_explore, allowedPis);
@@ -77,28 +94,39 @@ export async function execute(
     }
   }
 
-  // Execute each hop
+  // Execute each hop using triad model
   for (let i = 0; i < ast.hops.length; i++) {
     const hop = ast.hops[i];
     const previousCandidates = candidates;
+    const isLastHop = i === ast.hops.length - 1;
+    const hopLimit = isLastHop ? k : k_explore;
 
-    // Check if this is a variable-depth hop
-    if (hop.depth_range) {
-      // Variable-depth hop - BFS exploration within depth range
-      // Results become starting points for subsequent hops (stacked variable-depth)
-      candidates = await executeVariableDepthHop(
+    try {
+      // All hops (single and variable-depth) use the triad executor
+      candidates = await executeTriad(
         candidates,
         hop,
         services,
-        k,
-        k_explore,
+        hopLimit,
         allowedPis
       );
       candidatesExplored += candidates.length;
-    } else {
-      // Regular single hop
-      candidates = await executeHop(candidates, hop, services, k, k_explore, allowedPis);
-      candidatesExplored += candidates.length;
+    } catch (error) {
+      // Handle unsupported query patterns
+      if (error instanceof Error && error.message.includes('requires')) {
+        return buildErrorResult(
+          params.path || '',
+          ast.hops.length,
+          k,
+          k_explore,
+          startTime,
+          candidatesExplored,
+          'unsupported_query',
+          error.message,
+          lineageMetadata
+        );
+      }
+      throw error;
     }
 
     if (candidates.length === 0) {
@@ -218,4 +246,4 @@ function buildPartialResult(
 }
 
 export { resolveEntry, applyEntryFilter } from './entry';
-export { executeHop } from './traverse';
+export { executeTriad } from './triad';

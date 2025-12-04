@@ -2,7 +2,15 @@
  * GraphDB Gateway Client
  */
 
-import type { Entity, Relationship, RelationshipSet } from '../types';
+import type {
+  Entity,
+  Relationship,
+  RelationshipSet,
+  PathsBetweenRequest,
+  PathsBetweenResponse,
+  PathsReachableRequest,
+  PathsReachableResponse,
+} from '../types';
 
 interface GetEntityResponse {
   found: boolean;
@@ -80,6 +88,7 @@ export class GraphDBClient {
     }
 
     // Transform raw relationships into our format, split by direction
+    // Preserve target_type and target_label for pre-filtering optimization
     const outgoing: Relationship[] = [];
     const incoming: Relationship[] = [];
 
@@ -90,6 +99,8 @@ export class GraphDBClient {
         object_id: rel.direction === 'outgoing' ? rel.target_id : canonical_id,
         properties: rel.properties,
         source_pi: rel.source_pi,
+        target_type: rel.target_type,
+        target_label: rel.target_label,
       };
 
       if (rel.direction === 'outgoing') {
@@ -118,5 +129,51 @@ export class GraphDBClient {
 
     await Promise.all(promises);
     return results;
+  }
+
+  /**
+   * Find shortest paths between source and target entity sets
+   * Uses Neo4j's native path-finding for efficient graph traversal
+   */
+  async findPathsBetween(
+    req: PathsBetweenRequest
+  ): Promise<PathsBetweenResponse> {
+    const response = await this.service.fetch('http://graphdb/paths/between', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(
+        `GraphDB findPathsBetween failed: ${response.status} ${error}`
+      );
+    }
+
+    return response.json() as Promise<PathsBetweenResponse>;
+  }
+
+  /**
+   * Find entities of a specific type reachable from source entities
+   * Uses Neo4j's native path-finding with BFS-style depth queries
+   */
+  async findReachable(
+    req: PathsReachableRequest
+  ): Promise<PathsReachableResponse> {
+    const response = await this.service.fetch('http://graphdb/paths/reachable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(
+        `GraphDB findReachable failed: ${response.status} ${error}`
+      );
+    }
+
+    return response.json() as Promise<PathsReachableResponse>;
   }
 }
