@@ -487,7 +487,7 @@ function buildPathStepsFromEdges(
       direction: 'outgoing', // GraphDB returns in traversal order
     });
 
-    // Add entity step
+    // Add entity step - use object_label/object_type from edge
     if (isLast) {
       // For the final target, we have the full entity
       steps.push({
@@ -496,10 +496,11 @@ function buildPathStepsFromEdges(
         type: targetEntity.type,
       });
     } else {
-      // For intermediate entities, we only have the ID from the edge
+      // For intermediate entities, use edge metadata
       steps.push({
         entity: edge.object_id,
-        // We don't have label/type for intermediate entities
+        label: edge.object_label,
+        type: edge.object_type,
       });
     }
   }
