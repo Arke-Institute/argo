@@ -45,6 +45,10 @@ export default {
         return handleQuery(request, env, corsHeaders);
       }
 
+      if (path === '/search/collections' && request.method === 'GET') {
+        return handleCollectionSearch(request, env, corsHeaders);
+      }
+
       return json({ error: 'Not found' }, corsHeaders, 404);
     } catch (error) {
       console.error('Unhandled error:', error);
@@ -325,6 +329,66 @@ async function handleQuery(
   }
 
   return json(result, corsHeaders);
+}
+
+/**
+ * Handle GET /search/collections - Semantic search for collections
+ *
+ * Query params:
+ * - q: Search query text (required)
+ * - limit: Max results (default 10, max 50)
+ * - visibility: Filter by visibility ('public' or 'private')
+ */
+async function handleCollectionSearch(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const url = new URL(request.url);
+  const query = url.searchParams.get('q');
+  const limitParam = url.searchParams.get('limit');
+  const visibility = url.searchParams.get('visibility');
+
+  if (!query?.trim()) {
+    return json({ error: 'Missing q parameter' }, corsHeaders, 400);
+  }
+
+  const limit = Math.min(Math.max(parseInt(limitParam || '10'), 1), 50);
+
+  // Build filter for visibility if specified
+  const filter: Record<string, unknown> | undefined = visibility
+    ? { visibility: { $eq: visibility } }
+    : undefined;
+
+  const services = createServices(env);
+
+  try {
+    const matches = await services.pinecone.queryByText(query, {
+      top_k: limit,
+      filter,
+      namespace: 'collections',
+      include_metadata: true,
+    });
+
+    // Transform matches to collection results
+    const collections = matches.map((match) => ({
+      id: match.id,
+      score: match.score,
+      title: match.metadata?.label,
+      slug: match.metadata?.slug,
+      rootPi: match.metadata?.source_pi,
+      visibility: match.metadata?.visibility,
+    }));
+
+    return json({ collections, count: collections.length }, corsHeaders);
+  } catch (error) {
+    console.error('Collection search error:', error);
+    return json(
+      { error: 'Search failed', message: String(error) },
+      corsHeaders,
+      500
+    );
+  }
 }
 
 /**

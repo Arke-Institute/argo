@@ -16,9 +16,10 @@ export class PineconeClient {
       top_k?: number;
       filter?: Record<string, unknown>;
       include_metadata?: boolean;
+      namespace?: string;
     } = {}
   ): Promise<PineconeMatch[]> {
-    const { top_k = 10, filter, include_metadata = true } = options;
+    const { top_k = 10, filter, include_metadata = true, namespace } = options;
 
     const body: Record<string, unknown> = {
       vector,
@@ -28,6 +29,10 @@ export class PineconeClient {
 
     if (filter) {
       body.filter = filter;
+    }
+
+    if (namespace) {
+      body.namespace = namespace;
     }
 
     const response = await this.service.fetch('http://pinecone/query', {
@@ -93,5 +98,48 @@ export class PineconeClient {
         type: { $eq: type },
       },
     });
+  }
+
+  /**
+   * Text-based semantic search (embedding generated server-side)
+   */
+  async queryByText(
+    text: string,
+    options: {
+      top_k?: number;
+      filter?: Record<string, unknown>;
+      include_metadata?: boolean;
+      namespace?: string;
+    } = {}
+  ): Promise<PineconeMatch[]> {
+    const { top_k = 10, filter, include_metadata = true, namespace } = options;
+
+    const body: Record<string, unknown> = {
+      text,
+      top_k,
+      include_metadata,
+    };
+
+    if (filter) {
+      body.filter = filter;
+    }
+
+    if (namespace) {
+      body.namespace = namespace;
+    }
+
+    const response = await this.service.fetch('http://pinecone/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Pinecone query failed: ${response.status} ${error}`);
+    }
+
+    const result = (await response.json()) as PineconeQueryResponse;
+    return result.matches || [];
   }
 }

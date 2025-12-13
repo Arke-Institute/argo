@@ -164,6 +164,11 @@ export interface PineconeMatch {
     label: string;
     type: string;
     source_pi: string;
+    // Collection-specific fields (present in collections namespace)
+    slug?: string;
+    visibility?: string;
+    // Allow additional fields
+    [key: string]: unknown;
   };
 }
 
