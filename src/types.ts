@@ -3,6 +3,23 @@
  */
 
 // ============================================================================
+// PI Type Helpers
+// ============================================================================
+
+/**
+ * PI type can be 'pi' or 'PI' - normalize for comparisons
+ */
+export const PI_TYPES = ['pi', 'PI'] as const;
+export type PIType = (typeof PI_TYPES)[number];
+
+/**
+ * Check if a type string represents a PI entity
+ */
+export function isPIType(type: string): boolean {
+  return PI_TYPES.includes(type as PIType);
+}
+
+// ============================================================================
 // Environment
 // ============================================================================
 

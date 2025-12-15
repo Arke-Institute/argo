@@ -3,8 +3,95 @@
  */
 
 import type { Services } from '../services';
-import type { CandidatePath } from '../types';
+import type { CandidatePath, Entity } from '../types';
 import type { EntryPoint, Filter } from '../parser/types';
+import { PI_TYPES } from '../types';
+
+// ============================================================================
+// Lineage Filter Helpers
+// ============================================================================
+
+/**
+ * Build Pinecone filter for lineage-scoped queries.
+ * Matches entities where:
+ * - source_pi is in allowedPis (direct extraction), OR
+ * - merged_entities_source_pis contains any of allowedPis (merged entities), OR
+ * - canonical_id is in allowedPis AND type is 'pi' or 'PI' (PI entities themselves)
+ *
+ * @param allowedPis - Array of PI IDs that define the lineage scope
+ * @param includeTypes - Optional type filter to combine with lineage filter
+ * @returns Pinecone filter object
+ */
+export function buildLineageFilter(
+  allowedPis: string[],
+  includeTypes?: string[]
+): Record<string, unknown> {
+  const lineageConditions: Record<string, unknown>[] = [
+    // Entities directly extracted from these PIs
+    { source_pi: { $in: allowedPis } },
+    // Entities that merged from these PIs (cross-collection discovery)
+    { merged_entities_source_pis: { $in: allowedPis } },
+    // PI entities that ARE these PIs (canonical_id matches and type is PI)
+    {
+      $and: [
+        { canonical_id: { $in: allowedPis } },
+        { type: { $in: PI_TYPES } },
+      ],
+    },
+  ];
+
+  // If type filter is also specified, wrap in $and
+  if (includeTypes && includeTypes.length > 0) {
+    const typeFilter =
+      includeTypes.length === 1
+        ? { type: { $eq: includeTypes[0] } }
+        : { type: { $in: includeTypes } };
+
+    return {
+      $and: [{ $or: lineageConditions }, typeFilter],
+    };
+  }
+
+  return { $or: lineageConditions };
+}
+
+/**
+ * Check if an entity belongs to the allowed PI lineage.
+ * Returns true if:
+ * - Entity's source_pis contains any of allowedPis (direct or merged), OR
+ * - Entity IS a PI and its canonical_id is in allowedPis
+ *
+ * This is used as a "belt and suspenders" check after Pinecone returns results,
+ * since GraphDB's source_pis array includes all PIs (direct + transferred via merge).
+ *
+ * @param entity - The entity to check
+ * @param allowedPis - Array of PI IDs that define the lineage scope
+ * @returns true if entity belongs to the lineage
+ */
+export function entityBelongsToLineage(
+  entity: Entity,
+  allowedPis: string[]
+): boolean {
+  // Check if entity's source PIs overlap with allowed PIs
+  // GraphDB's source_pis includes both direct and merged sources
+  if (entity.source_pis.some((pi) => allowedPis.includes(pi))) {
+    return true;
+  }
+
+  // Check if entity IS a PI that's in the lineage
+  if (
+    PI_TYPES.includes(entity.type as (typeof PI_TYPES)[number]) &&
+    allowedPis.includes(entity.canonical_id)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================================
+// Entry Point Resolution
+// ============================================================================
 
 /**
  * Resolve the entry point of a path query
@@ -51,8 +138,8 @@ async function resolveExactId(
     return [];
   }
 
-  // Filter by allowed PIs if specified
-  if (allowedPis && !entity.source_pis.some((pi) => allowedPis.includes(pi))) {
+  // Filter by allowed PIs if specified (includes PI entities and merged sources)
+  if (allowedPis && !entityBelongsToLineage(entity, allowedPis)) {
     return [];
   }
 
@@ -84,10 +171,9 @@ async function resolveSemanticSearch(
   // Embed the search text
   const embedding = await services.embedding.embedOne(text);
 
-  // Build Pinecone filter with PI constraint if specified
-  const filter = allowedPis
-    ? { source_pi: { $in: allowedPis } }
-    : undefined;
+  // Build comprehensive lineage filter if PI constraint specified
+  // This matches: direct source_pi, merged_entities_source_pis, or PI entities themselves
+  const filter = allowedPis ? buildLineageFilter(allowedPis) : undefined;
 
   // Query Pinecone for top k_explore matches
   const matches = await services.pinecone.query(embedding, {
@@ -110,8 +196,9 @@ async function resolveSemanticSearch(
     const entity = entities.get(match.id);
     if (!entity) continue;
 
-    // Double-check entity belongs to allowed PIs (belt and suspenders)
-    if (allowedPis && !entity.source_pis.some((pi) => allowedPis.includes(pi))) {
+    // Belt-and-suspenders: verify entity belongs to lineage via GraphDB's source_pis
+    // (which includes transferred sources from merges)
+    if (allowedPis && !entityBelongsToLineage(entity, allowedPis)) {
       continue;
     }
 
@@ -143,21 +230,19 @@ async function resolveTypeFilter(
   k_explore: number,
   allowedPis?: string[]
 ): Promise<CandidatePath[]> {
-  // Build Pinecone filter for type(s) and optionally PI constraint
-  const conditions: Record<string, unknown>[] = [];
-
-  if (typeValues.length === 1) {
-    conditions.push({ type: { $eq: typeValues[0] } });
-  } else {
-    conditions.push({ type: { $in: typeValues } });
-  }
+  // Build filter combining type and lineage constraints
+  let filter: Record<string, unknown>;
 
   if (allowedPis) {
-    conditions.push({ source_pi: { $in: allowedPis } });
+    // Use comprehensive lineage filter with type constraint
+    filter = buildLineageFilter(allowedPis, typeValues);
+  } else {
+    // Type filter only (no lineage constraint)
+    filter =
+      typeValues.length === 1
+        ? { type: { $eq: typeValues[0] } }
+        : { type: { $in: typeValues } };
   }
-
-  const filter =
-    conditions.length === 1 ? conditions[0] : { $and: conditions };
 
   // We need a vector for Pinecone query - use a zero vector
   // This will return random-ish results within the type filter
@@ -186,6 +271,11 @@ async function resolveTypeFilter(
 
     // Verify type matches (belt and suspenders)
     if (!typeValues.includes(entity.type)) continue;
+
+    // Belt-and-suspenders: verify entity belongs to lineage
+    if (allowedPis && !entityBelongsToLineage(entity, allowedPis)) {
+      continue;
+    }
 
     candidates.push({
       current_entity: entity,
@@ -217,21 +307,19 @@ async function resolveTypeFilterSemantic(
   // Embed the search text
   const embedding = await services.embedding.embedOne(text);
 
-  // Build Pinecone filter for type(s) and optionally PI constraint
-  const conditions: Record<string, unknown>[] = [];
-
-  if (typeValues.length === 1) {
-    conditions.push({ type: { $eq: typeValues[0] } });
-  } else {
-    conditions.push({ type: { $in: typeValues } });
-  }
+  // Build filter combining type and lineage constraints
+  let filter: Record<string, unknown>;
 
   if (allowedPis) {
-    conditions.push({ source_pi: { $in: allowedPis } });
+    // Use comprehensive lineage filter with type constraint
+    filter = buildLineageFilter(allowedPis, typeValues);
+  } else {
+    // Type filter only (no lineage constraint)
+    filter =
+      typeValues.length === 1
+        ? { type: { $eq: typeValues[0] } }
+        : { type: { $in: typeValues } };
   }
-
-  const filter =
-    conditions.length === 1 ? conditions[0] : { $and: conditions };
 
   // Query Pinecone with type filter and semantic embedding
   const matches = await services.pinecone.query(embedding, {
@@ -256,6 +344,11 @@ async function resolveTypeFilterSemantic(
 
     // Verify type matches (belt and suspenders)
     if (!typeValues.includes(entity.type)) continue;
+
+    // Belt-and-suspenders: verify entity belongs to lineage
+    if (allowedPis && !entityBelongsToLineage(entity, allowedPis)) {
+      continue;
+    }
 
     candidates.push({
       current_entity: entity,

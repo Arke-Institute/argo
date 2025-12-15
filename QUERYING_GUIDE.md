@@ -14,7 +14,8 @@ This document covers everything you need to know about querying the Arke Institu
   - [2.1 What's Stored in the Index](#21-whats-stored-in-the-index)
   - [2.2 Metadata Fields](#22-metadata-fields)
   - [2.3 Available Filters](#23-available-filters)
-  - [2.4 Query Examples](#24-query-examples)
+  - [2.4 Lineage Filtering (Scoped Queries)](#24-lineage-filtering-scoped-queries)
+  - [2.5 Query Examples](#25-query-examples)
 - [3. Entity Structure](#3-entity-structure)
   - [3.1 Core Entity Properties](#31-core-entity-properties)
   - [3.2 Entity Types](#32-entity-types)
@@ -117,6 +118,8 @@ Pinecone supports metadata filters using these operators:
 | `$ne` | Not equals | `{"type": {"$ne": "file"}}` |
 | `$in` | In list | `{"type": {"$in": ["person", "organization"]}}` |
 | `$nin` | Not in list | `{"type": {"$nin": ["file", "date"]}}` |
+| `$or` | Logical OR | `{"$or": [{"type": {"$eq": "person"}}, {"type": {"$eq": "place"}}]}` |
+| `$and` | Logical AND | `{"$and": [{"type": {"$eq": "person"}}, {"source_pi": {"$eq": "PI_X"}}]}` |
 
 **Combine filters:**
 ```json
@@ -128,7 +131,92 @@ Pinecone supports metadata filters using these operators:
 }
 ```
 
-### 2.4 Query Examples
+### 2.4 Lineage Filtering (Scoped Queries)
+
+When using the Argo query engine with `lineage` parameter, queries are scoped to entities related to a specific PI hierarchy. The filter comprehensively matches:
+
+1. **Directly extracted entities**: Entities with `source_pi` matching any PI in the lineage
+2. **Merged entities**: Entities that have `merged_entities_source_pis` containing any PI from the lineage (cross-collection discovery)
+3. **PI entities themselves**: PI nodes (`type: 'pi'` or `type: 'PI'`) whose `canonical_id` is in the lineage
+
+#### Pinecone Metadata for Lineage
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_pi` | string | Direct source PI that extracted this entity |
+| `merged_entities_source_pis` | string[] | Source PIs from entities that were merged into this one |
+
+#### How Lineage Filtering Works
+
+**Scenario:**
+```
+PI_ROOT
+├── PI_CHILD_1 (extracts Entity A with source_pi: PI_CHILD_1)
+└── PI_CHILD_2 (extracts Entity B with source_pi: PI_CHILD_2)
+
+Later: Entity B is merged into Entity A
+Result: Entity A now has merged_entities_source_pis: [PI_CHILD_2]
+```
+
+**Query with `lineage: { sourcePi: "PI_CHILD_2", direction: "ancestors" }`:**
+
+The filter matches:
+- ✅ Entity A (via `merged_entities_source_pis` containing PI_CHILD_2)
+- ✅ PI_CHILD_2 entity itself (it's a PI in the lineage)
+- ✅ PI_ROOT entity (it's an ancestor PI in the lineage)
+- ❌ Entity C from PI_OTHER (not in lineage)
+
+#### Argo Query DSL with Lineage
+
+**Shorthand format** (defaults to `direction: "both"`):
+```json
+{
+  "path": "\"albert einstein\" type:person",
+  "lineage": "01ABC123"
+}
+```
+
+**Full format** (explicit direction control):
+```json
+{
+  "path": "\"albert einstein\" type:person",
+  "lineage": {
+    "sourcePi": "01ABC123",
+    "direction": "descendants"
+  }
+}
+```
+
+Directions:
+- `"both"` (default): Include ancestors and descendants
+- `"ancestors"`: Only include parent PIs in the hierarchy
+- `"descendants"`: Only include child PIs in the hierarchy
+
+This will find "albert einstein" entities only within the PI hierarchy rooted at `01ABC123`, including:
+- Entities directly extracted from any descendant PI
+- Entities that were merged from descendant PIs (cross-collection discovery)
+- The PI entities themselves that make up the hierarchy
+
+#### Raw Pinecone Filter Structure
+
+The lineage filter internally generates:
+
+```json
+{
+  "$or": [
+    { "source_pi": { "$in": ["PI_1", "PI_2", "PI_3"] } },
+    { "merged_entities_source_pis": { "$in": ["PI_1", "PI_2", "PI_3"] } },
+    {
+      "$and": [
+        { "canonical_id": { "$in": ["PI_1", "PI_2", "PI_3"] } },
+        { "type": { "$in": ["pi", "PI"] } }
+      ]
+    }
+  ]
+}
+```
+
+### 2.5 Query Examples
 
 #### Semantic Search (Find Similar Entities)
 
@@ -997,3 +1085,4 @@ LIMIT 50
 5. **For dates**: Use deterministic IDs (`date_YYYY_MM_DD`) and query incoming relationships
 6. **For files**: Filter by `type: "file"` and use `EXTRACTED_FROM`/`MENTIONED_IN`
 7. **For PI traversal**: Use hierarchy endpoints or `MENTIONED_IN` relationships
+8. **For lineage-scoped queries**: Use Argo's `lineage` parameter to find entities within a PI hierarchy, including merged entities from that lineage

@@ -289,20 +289,27 @@ async function handleQuery(
   }
 
   // Resolve lineage if provided
+  // Supports both shorthand: "lineage": "pi_id" (defaults to direction: "both")
+  // and full form: "lineage": { "sourcePi": "pi_id", "direction": "ancestors" }
   let allowedPis: string[] | undefined;
   let lineageMetadata: LineageMetadata | undefined;
 
   if (body.lineage) {
     try {
+      // Normalize lineage input: string -> { sourcePi, direction: 'both' }
+      const lineageInput = typeof body.lineage === 'string'
+        ? { sourcePi: body.lineage, direction: 'both' as const }
+        : body.lineage;
+
       const lineageClient = new LineageClient(env.GRAPHDB_GATEWAY);
       const lineageResult = await lineageClient.getLineage(
-        body.lineage.sourcePi,
-        body.lineage.direction
+        lineageInput.sourcePi,
+        lineageInput.direction || 'both'
       );
       allowedPis = lineageResult.pis;
       lineageMetadata = {
-        sourcePi: body.lineage.sourcePi,
-        direction: body.lineage.direction,
+        sourcePi: lineageInput.sourcePi,
+        direction: lineageInput.direction || 'both',
         piCount: lineageResult.pis.length,
         truncated: lineageResult.truncated,
       };
