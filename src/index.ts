@@ -49,6 +49,10 @@ export default {
         return handleCollectionSearch(request, env, corsHeaders);
       }
 
+      if (path === '/search/semantic' && request.method === 'POST') {
+        return handleSemanticSearch(request, env, corsHeaders);
+      }
+
       return json({ error: 'Not found' }, corsHeaders, 404);
     } catch (error) {
       console.error('Unhandled error:', error);
@@ -390,6 +394,64 @@ async function handleCollectionSearch(
     return json({ collections, count: collections.length }, corsHeaders);
   } catch (error) {
     console.error('Collection search error:', error);
+    return json(
+      { error: 'Search failed', message: String(error) },
+      corsHeaders,
+      500
+    );
+  }
+}
+
+/**
+ * Handle POST /search/semantic - Direct semantic search against Pinecone
+ *
+ * This bypasses the path query syntax and directly queries the vector index.
+ * Useful for simple semantic searches with optional filters.
+ *
+ * Request body:
+ * - text: Search query text (required)
+ * - namespace: Pinecone namespace (default: 'entities')
+ * - filter: Pinecone filter object (e.g., { type: { $eq: 'person' } })
+ * - top_k: Max results (default: 10, max: 100)
+ */
+async function handleSemanticSearch(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  let body: {
+    text?: string;
+    namespace?: string;
+    filter?: Record<string, unknown>;
+    top_k?: number;
+  };
+
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, corsHeaders, 400);
+  }
+
+  if (!body.text?.trim()) {
+    return json({ error: 'Missing or empty text field' }, corsHeaders, 400);
+  }
+
+  const topK = Math.min(Math.max(body.top_k || 10, 1), 100);
+  const namespace = body.namespace || 'entities';
+
+  const services = createServices(env);
+
+  try {
+    const matches = await services.pinecone.queryByText(body.text, {
+      top_k: topK,
+      filter: body.filter,
+      namespace,
+      include_metadata: true,
+    });
+
+    return json({ matches }, corsHeaders);
+  } catch (error) {
+    console.error('Semantic search error:', error);
     return json(
       { error: 'Search failed', message: String(error) },
       corsHeaders,
