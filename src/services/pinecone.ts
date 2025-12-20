@@ -5,7 +5,10 @@
 import type { PineconeMatch, PineconeQueryResponse } from '../types';
 
 export class PineconeClient {
-  constructor(private service: Fetcher) {}
+  constructor(
+    private service: Fetcher,
+    private defaultNamespace: string = 'entities'
+  ) {}
 
   /**
    * Semantic search with optional filters
@@ -21,18 +24,18 @@ export class PineconeClient {
   ): Promise<PineconeMatch[]> {
     const { top_k = 10, filter, include_metadata = true, namespace } = options;
 
+    // Use provided namespace, or fall back to default
+    const effectiveNamespace = namespace ?? this.defaultNamespace;
+
     const body: Record<string, unknown> = {
       vector,
       top_k,
       include_metadata,
+      namespace: effectiveNamespace,
     };
 
     if (filter) {
       body.filter = filter;
-    }
-
-    if (namespace) {
-      body.namespace = namespace;
     }
 
     const response = await this.service.fetch('http://pinecone/query', {
@@ -58,11 +61,14 @@ export class PineconeClient {
   async queryByIdsWithText(
     text: string,
     ids: string[],
-    top_k?: number
+    top_k?: number,
+    namespace?: string
   ): Promise<PineconeMatch[]> {
     if (ids.length === 0) {
       return [];
     }
+
+    const effectiveNamespace = namespace ?? this.defaultNamespace;
 
     const response = await this.service.fetch('http://pinecone/query-by-ids', {
       method: 'POST',
@@ -72,6 +78,7 @@ export class PineconeClient {
         text,
         top_k: top_k || ids.length,
         include_metadata: true,
+        namespace: effectiveNamespace,
       }),
     });
 
@@ -114,18 +121,18 @@ export class PineconeClient {
   ): Promise<PineconeMatch[]> {
     const { top_k = 10, filter, include_metadata = true, namespace } = options;
 
+    // Use provided namespace, or fall back to default
+    const effectiveNamespace = namespace ?? this.defaultNamespace;
+
     const body: Record<string, unknown> = {
       text,
       top_k,
       include_metadata,
+      namespace: effectiveNamespace,
     };
 
     if (filter) {
       body.filter = filter;
-    }
-
-    if (namespace) {
-      body.namespace = namespace;
     }
 
     const response = await this.service.fetch('http://pinecone/query', {

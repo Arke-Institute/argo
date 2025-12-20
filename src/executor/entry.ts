@@ -38,6 +38,8 @@ export function buildLineageFilter(
         { type: { $in: PI_TYPES } },
       ],
     },
+    // Entities that absorbed something from the lineage (safety net for merges)
+    { merged_entities: { $in: allowedPis } },
   ];
 
   // If type filter is also specified, wrap in $and
